@@ -5,7 +5,7 @@
     <!-- Project Info -->
     <groupId>com.decoded.software</groupId>
     <artifactId>hubcap-project</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>HubCap</name>
     <description>HubCap is a GitHub Repository Analyzer Tool. It can be used either Standalone, or at the command line.</description>
@@ -15,8 +15,8 @@
     <scm>
         <url>https://github.com/decoded4620/HubCap</url>
         <connection>scm:git:https://github.com/decoded4620/HubCap.git</connection>
-        <developerConnection>scm:git:git://github.com/decoded4620/HubCap.git</developerConnection>
-        <tag>hubcap-project-0.0.1</tag>
+        <developerConnection>scm:git:https://github.com/decoded4620/HubCap.git</developerConnection>
+        <tag>HEAD</tag>
     </scm>
     <distributionManagement>
         <!-- uncomment these when distribution is ready -->
