@@ -1,0 +1,5 @@
+.settings
+/target/
+*.exec
+core/target
+target
