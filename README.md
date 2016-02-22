@@ -18,6 +18,7 @@ includes `%M2%`
 * Travis 1.8.2
 * Eclipse "Mars"
 * Git (Windows 64) https://git-scm.com/download/win
+
 #### Basic Testing
 Using JUnit Test Cases and Maven SureFire Plugin
 
