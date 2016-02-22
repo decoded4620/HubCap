@@ -18,6 +18,10 @@ includes `%M2%`
 * Travis 1.8.2
 * Eclipse "Mars"
 * Git (Windows 64) https://git-scm.com/download/win
+* GPG (Windows) https://www.gpg4win.org/download.html
+
+##### Verifying Signed Package
+gpg --keyserver hkp://pgp.mit.edu --recv-keys 4EB44968
 
 #### Basic Testing
 Using JUnit Test Cases and Maven SureFire Plugin
