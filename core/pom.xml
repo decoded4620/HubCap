@@ -1,0 +1,30 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.decoded.software</groupId>
+		<artifactId>hubcap-project</artifactId>
+		<version>0.0.1</version>
+	</parent>
+	<artifactId>hubcap</artifactId>
+	<packaging>jar</packaging>
+	<name>HubCap-Core</name>
+	<dependencies>
+		<!-- 
+		<dependency>
+			<groupId>org.apache.httpcomponents</groupId>
+			<artifactId>httpclient</artifactId>
+			<version>4.2.5</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.httpcomponents</groupId>
+			<artifactId>httpmime</artifactId>
+			<version>4.2.5</version>
+			<scope>test</scope>
+		</dependency>
+		 -->
+	</dependencies>
+	<properties>
+		<minimal.coverage>0.70</minimal.coverage>
+	</properties>
+</project>
