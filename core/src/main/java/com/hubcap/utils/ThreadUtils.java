@@ -27,8 +27,61 @@ package com.hubcap.utils;
  */
 
 import java.io.File;
+import java.lang.Thread.State;
+import java.util.Date;
+
+import com.hubcap.Constants;
+import com.hubcap.lowlevel.ExpressionEval;
 
 public class ThreadUtils {
+
+    // reference to our main thread
+    private static Thread mainThread;
+
+    /**
+     * Only allow setting and clearing of the main thread i.e. cannot
+     * 'overwrite', must explicitely setNull first.
+     * 
+     * @param t
+     */
+    public static void setMainThread(Thread t) {
+        if (mainThread != t) {
+            if (mainThread == null && t != null) {
+                mainThread = t;
+            } else if (t == null && mainThread != null) {
+                mainThread = null;
+            }
+        }
+    }
+
+    public static Thread getMainThread() {
+        return mainThread;
+    }
+
+    public static boolean isMainThread(Thread t) {
+        return t == mainThread;
+    }
+
+    public static boolean fold(Thread t, boolean join, boolean verbose) {
+        if (t != mainThread) {
+
+            // first attempt to interrupt the thread
+            // get it out of any loops or sleeps
+            t.interrupt();
+
+            // then join its execution with the main thread
+            // safely
+            if (join) {
+                return ThreadUtils.safeJoin(t, verbose);
+            }
+
+            // only return true if we successfully terminated the thread
+            return t.getState() == State.TERMINATED;
+        } else {
+            System.err.println("HubCap::fold() - CANNOT FOLD MAIN THREAD!");
+        }
+        return false;
+    }
 
     /**
      * Does a basic calculation on the number of threads you can concuurently
@@ -72,4 +125,101 @@ public class ThreadUtils {
 
         return numThreads;
     }
+
+    /**
+     * Wait safely, returns true if wait finished normally. Returns false
+     * otherwise. Blocking.
+     * 
+     * @param factory
+     * @return
+     */
+    public static boolean safeWait(Object factory, boolean verbose) {
+        try {
+            factory.wait();
+            return true;
+        } catch (InterruptedException ex) {
+
+            if (verbose) {
+                System.err.println("SAFE WAIT!");
+                ErrorUtils.printStackTrace(ex);
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Join a thread safely, returns true if wait finished normally. Returns
+     * false otherwise. If thread is stuck in an infinite loop and not
+     * responding to interrupts, this could hang your main thread.
+     * 
+     * @param factory
+     * @return
+     */
+    public static boolean safeJoin(Thread t, boolean verbose) {
+        try {
+            t.join();
+            return true;
+        } catch (InterruptedException ex) {
+            if (verbose) {
+                System.err.println("SAFE JOIN!");
+                ErrorUtils.printStackTrace(ex);
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Wrapper for <code>Thread.sleep</code> that makes it safe.
+     * 
+     * @param millis
+     *            a <code>long</code>
+     */
+    public static boolean safeSleep(long millis, boolean verbose) {
+        try {
+            Thread.sleep(millis);
+            return true;
+        } catch (InterruptedException ex) {
+            if (verbose) {
+                System.err.println("SAFE SLEEP!");
+                ErrorUtils.printStackTrace(ex);
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Performs a 'safe sleep' forever until eval.evaluate() returns true.
+     * 
+     * @param eval
+     *            The ExpressionEval to evaluate for true/false response.
+     * @param maxTime
+     *            a <code>long</code>, the max time to wait if the expression
+     *            never returns true. if you pass -1 for this parameter,
+     *            Long.MAX_TIME will be used, which is essentially more time
+     *            than you or i will live on this planet.
+     * @return a <code>boolean</code>, <code>true</code> if the wait completed
+     *         normally. <code>false</code> otherwise.
+     */
+    public static boolean waitUntil(ExpressionEval eval, long maxTime, long interval, boolean verbose) {
+
+        // not infinite, but a long time.
+        if (maxTime == -1) {
+            maxTime = Long.MAX_VALUE;
+        }
+
+        if (interval == -1) {
+            interval = Constants.IDLE_TIME;
+        }
+
+        long start = (new Date().getTime());
+        // wait a bit for tasks to start
+        while ((boolean) eval.evaluate() != true) {
+            if (!ThreadUtils.safeSleep(interval, verbose) || (maxTime >= 0 && (new Date().getTime()) - start > maxTime)) {
+                break;
+            }
+        }
+
+        return true;
+    }
+
 }

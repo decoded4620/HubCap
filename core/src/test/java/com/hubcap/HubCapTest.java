@@ -34,10 +34,14 @@ import org.junit.BeforeClass;
 
 import org.junit.Test;
 
+import com.hubcap.lowlevel.ExpressionEval;
+import com.hubcap.process.ProcessModel;
 import com.hubcap.task.TaskRunner;
 import com.hubcap.task.TaskRunnerListener;
+import com.hubcap.task.helpers.DebugSearchHelper;
 import com.hubcap.task.state.TaskRunnerState;
 import com.hubcap.utils.ErrorUtils;
+import com.hubcap.utils.ThreadUtils;
 
 public class HubCapTest {
 
@@ -45,7 +49,14 @@ public class HubCapTest {
 
     @BeforeClass
     public static void setup() {
+        int i = 5;
         System.out.println("------------------------------------------------------------------SETUP");
+        System.out.println("Please Take a " + i + " seconds to start your JMX Console or Profiling tools");
+
+        while (--i >= 0) {
+            System.out.print(i + ".. ");
+            ThreadUtils.safeSleep(1000, ProcessModel.instance().getVerbose());
+        }
 
         listener = new TaskRunnerListener() {
 
@@ -57,28 +68,24 @@ public class HubCapTest {
 
             @Override
             public void onTaskStart(TaskRunner runner) {
-                // TODO Auto-generated method stub
-                // System.err.println("onTaskStart(" + runner.getTaskId() +
-                // ")");
             }
 
             @Override
             public void onTaskError(TaskRunner runner, Exception e, boolean canRecoverFromError) {
                 // TODO Auto-generated method stub
-                System.err.println("onTaskError(" + runner.getTaskId() + ", " + e.toString() + ", can recover? " + canRecoverFromError);
+                // System.err.println("onTaskError(" + runner.getTaskId() + ", "
+                // + e.toString() + ", can recover? " + canRecoverFromError);
             }
 
             @Override
-            public void onTaskDataReceived(TaskRunner runner, Object taskData) {
+            public void onTaskDataReceived(TaskRunner runner) {
                 // TODO Auto-generated method stub
 
             }
 
             @Override
-            public void onTaskComplete(TaskRunner runner, Object aggregatedResults) {
+            public void onTaskComplete(TaskRunner runner) {
                 // TODO Auto-generated method stub
-                // System.err.println("onTaskComplete(" + runner.getTaskId() +
-                // ", Result Type" + aggregatedResults.getClass().getName());
             }
         };
 
@@ -102,19 +109,30 @@ public class HubCapTest {
             caught = true;
         }
 
-        long now = (new Date().getTime());
-        // wait a bit for tasks to start
-        while (TaskRunner.activeTaskCount() == 0) {
-            if (!ErrorUtils.safeSleep(Constants.MINI_TIME) || (new Date().getTime()) - now > 1000) {
-                break;
+        // wait indefinitely until active task count is 0
+        ThreadUtils.waitUntil(new ExpressionEval() {
+
+            @Override
+            public Object evaluate() {
+                return TaskRunner.activeTaskCount() > 0;
             }
-        }
+        }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
 
         Assert.assertEquals(caught, false);
-        System.out.println("Task Count: " + TaskRunner.activeTaskCount());
-        while (TaskRunner.activeTaskCount() > 0 && ErrorUtils.safeSleep(Constants.FREE_TASK_RUNNER_WAIT_TIME)) {
-            System.out.println("Awaiting " + TaskRunner.activeTaskCount() + " tasks to complete");
-        }
+
+        // wait indefinitely until active task count is 0
+        ThreadUtils.waitUntil(new ExpressionEval() {
+
+            @Override
+            public Object evaluate() {
+                if (TaskRunner.waitingTaskCount() < 20) {
+                    System.out.println("waiting for: " + TaskRunner.waitingTaskCount());
+                }
+                return TaskRunner.waitingTaskCount() == 0;
+            }
+        }, -1, Constants.TASK_RUN_STOP_WAIT_TIME_MS, ProcessModel.instance().getVerbose());
+
+        System.out.println("pass!");
     }
 
     @Test
@@ -127,22 +145,32 @@ public class HubCapTest {
             // start a crap ton of threads
 
             for (int i = 0; i < Constants.MAX_THREADS; i++) {
-                hub.processArgs(hub.repl().processREPLInput("-w -Dkey=value -Dkey2=value2 \"C:\\Program Files\\Notepad++\\Notepad.exe\" -Dkey3=\"value three\""), listener);
+                hub.processArgs(REPL.processREPLInput(i + " --debug"), listener);
             }
-            long now = (new Date().getTime());
-            // wait a bit for tasks to start
-            while (TaskRunner.activeTaskCount() == 0) {
-                if (!ErrorUtils.safeSleep(Constants.IDLE_TIME) || (new Date().getTime()) - now > 1000) {
-                    break;
+
+            // wait indefinitely until active task count is 0
+            ThreadUtils.waitUntil(new ExpressionEval() {
+
+                @Override
+                public Object evaluate() {
+                    return TaskRunner.activeTaskCount() > 0;
                 }
-            }
+            }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
 
-            System.out.println("Task Count: " + TaskRunner.activeTaskCount());
+            // wait indefinitely until active task count is 0
+            ThreadUtils.waitUntil(new ExpressionEval() {
 
-            // continue to wait until all tasks have completed
-            while (TaskRunner.activeTaskCount() > 0 && ErrorUtils.safeSleep(Constants.FREE_TASK_RUNNER_WAIT_TIME)) {
-                System.out.println("Awaiting " + TaskRunner.activeTaskCount() + " tasks to complete...");
-            }
+                @Override
+                public Object evaluate() {
+                    if (TaskRunner.waitingTaskCount() < 20) {
+                        System.out.println("waiting for: " + TaskRunner.waitingTaskCount());
+                    }
+                    return TaskRunner.waitingTaskCount() == 0;
+                }
+            }, -1, Constants.TASK_RUN_STOP_WAIT_TIME_MS, ProcessModel.instance().getVerbose());
+
+            System.out.println("pass!");
+
         } catch (Exception e) {
             ErrorUtils.printStackTrace(e);
         }
@@ -157,48 +185,94 @@ public class HubCapTest {
             HubCap hub = HubCap.instance();
             // start a crap ton of threads
 
-            int multiplier = 6;
+            int multiplier = 5;
 
-            TaskRunner.workTime = Constants.FAKE_WORK_TIME_HEAVY;
-
+            DebugSearchHelper.debugWorkTime = Constants.FAKE_WORK_TIME_HEAVY;
+            DebugSearchHelper.debug_errorChance = 0.025;
             for (int j = 0; j < multiplier; ++j) {
 
-                for (int i = 0; i < Constants.MAX_THREADS / 8; i++) {
-
-                    hub.processArgs(hub.repl().processREPLInput("-w -Dkey=value -Dkey2=value2 \"C:\\Program Files\\Notepad++\\Notepad.exe\" -Dkey3=\"value three\""), listener);
-                    hub.processArgs(hub.repl().processREPLInput("123 xyz -Dkey=value -w"), listener);
-                    hub.processArgs(hub.repl().processREPLInput("-w \"C:\\Program Files\\Notepad++\\Notepad.exe\" -Dkey=\"quoted value!\""), listener);
-                    hub.processArgs(hub.repl().processREPLInput("3333 4444 OOOO MMM GGGG -wf x"), listener);
+                for (int i = 0; i < Constants.MAX_THREADS; i++) {
+                    hub.processArgs(REPL.processREPLInput(j + "-" + i + " --debug"), listener);
                 }
 
-                if (!ErrorUtils.safeSleep(Constants.MINI_TIME)) {
+                if (!ThreadUtils.safeSleep(Constants.MINI_TIME, ProcessModel.instance().getVerbose())) {
                     break;
                 }
 
-                System.out.println("Active now: " + TaskRunner.activeTaskCount());
-
-                if (!ErrorUtils.safeSleep(Constants.MINI_TIME)) {
-                    break;
-                }
-            }
-            long now = (new Date().getTime());
-            // wait a bit for tasks to start
-            while (TaskRunner.activeTaskCount() == 0) {
-                if (!ErrorUtils.safeSleep(Constants.IDLE_TIME) || (new Date().getTime()) - now > Constants.TICK_INTERVAL * 10) {
+                if (!ThreadUtils.safeSleep(Constants.MINI_TIME, ProcessModel.instance().getVerbose())) {
                     break;
                 }
             }
 
-            // continue to wait until all tasks have completed
-            while (ErrorUtils.safeSleep(Constants.FREE_TASK_RUNNER_WAIT_TIME) && TaskRunner.activeTaskCount() > 0) {
-                System.out.println("waiting for tasks: " + TaskRunner.activeTaskCount());
-            }
+            // wait for at most X milliseconds for active task count to be more
+            // than 0
+            ThreadUtils.waitUntil(new ExpressionEval() {
 
-            System.out.println("all tasks complete!");
+                @Override
+                public Object evaluate() {
+                    return TaskRunner.activeTaskCount() > 0;
+                }
+            }, Constants.NEW_THREAD_SPAWN_BREATHING_TIME, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
+
+            // wait indefinitely until active task count is 0
+            ThreadUtils.waitUntil(new ExpressionEval() {
+
+                @Override
+                public Object evaluate() {
+                    if (TaskRunner.waitingTaskCount() < 100) {
+                        System.out.println("waiting for: " + TaskRunner.waitingTaskCount());
+                    }
+                    return TaskRunner.waitingTaskCount() == 0;
+                }
+            }, -1, Constants.TASK_RUN_STOP_WAIT_TIME_MS, ProcessModel.instance().getVerbose());
+
+            System.out.println("pass!");
 
         } catch (Exception e) {
             ErrorUtils.printStackTrace(e);
         }
+    }
+
+    @Test
+    public void test3() {
+
+        System.out.println("TEST REPL");
+        System.out.println("--------------------------------------------------");
+        HubCap hub = HubCap.instance();
+
+        hub.shutdownREPL();
+        String[] args = new String[2];
+        args[0] = "whatever";
+        args[1] = "-Drepl=true";
+        hub.processArgs(args);
+
+        // wait for at most X milliseconds for active task count to be > 0
+        ThreadUtils.waitUntil(new ExpressionEval() {
+
+            @Override
+            public Object evaluate() {
+                return TaskRunner.activeTaskCount() > 0;
+            }
+        }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
+
+        ThreadUtils.safeSleep(500, true);
+
+        // wait for at most X milliseconds for active task count to be 0
+        ThreadUtils.waitUntil(new ExpressionEval() {
+
+            @Override
+            public Object evaluate() {
+
+                System.out.println("waiting for: " + TaskRunner.waitingTaskCount());
+                return TaskRunner.waitingTaskCount() == 0;
+            }
+        }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
+
+        // sleep until tasks are done
+        // insure our repl command worked
+        Assert.assertTrue(hub.isREPL());
+
+        System.out.println("pass!");
     }
 
     @AfterClass
@@ -207,27 +281,40 @@ public class HubCapTest {
 
         HubCap hub = HubCap.instance();
         // attempt to exit
-        hub.processArgs(hub.repl().processREPLInput("exit"));
 
-        long now = (new Date().getTime());
+        while (TaskRunner.activeTaskCount() > 0) {
+            ThreadUtils.safeSleep(1000, true);
+        }
+        hub.processArgs(REPL.processREPLInput("exit"));
 
-        // wait a bit for tasks to start
-        while (TaskRunner.activeTaskCount() == 0) {
+        // wait for at most X milliseconds for active task count to be > 0
+        ThreadUtils.waitUntil(new ExpressionEval() {
 
-            if (!ErrorUtils.safeSleep(100) || (new Date().getTime()) - now > 1000) {
-                break;
+            @Override
+            public Object evaluate() {
+                return TaskRunner.activeTaskCount() > 0;
             }
-        }
+        }, 2000, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
 
-        System.out.println("Task Count: " + TaskRunner.activeTaskCount());
-        // give it a chance to shutdown
-        while (TaskRunner.activeTaskCount() > 0 && ErrorUtils.safeSleep(Constants.FREE_TASK_RUNNER_WAIT_TIME)) {
-            System.out.println("Awaiting " + TaskRunner.activeTaskCount() + " tasks to complete");
-        }
+        // wait for at most X milliseconds for active task count to be > 0
+        ThreadUtils.waitUntil(new ExpressionEval() {
+
+            @Override
+            public Object evaluate() {
+                if (TaskRunner.waitingTaskCount() < 100) {
+                    System.out.println("Awaiting " + TaskRunner.waitingTaskCount() + " tasks to complete");
+                }
+                return TaskRunner.waitingTaskCount() == 0;
+            }
+        }, 2000, Constants.TASK_RUN_STOP_WAIT_TIME_MS, ProcessModel.instance().getVerbose());
 
         System.out.println("------------------------------------------------------------------TEAR DOWN END");
 
-        ErrorUtils.safeSleep(5000);
+        // garbage collection
+        System.gc();
+        System.runFinalization();
+
+        ThreadUtils.safeSleep(5000, ProcessModel.instance().getVerbose());
 
         System.out.println("Exit.");
     }

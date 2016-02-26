@@ -4,6 +4,8 @@
 package com.hubcap.task;
 
 import java.lang.Thread.State;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 
 /*
  * #%L
@@ -36,7 +38,6 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Properties;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,34 +46,65 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.DefaultParser;
-import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 
 import com.hubcap.Constants;
+import com.hubcap.HubCap;
 import com.hubcap.inputs.CLIOptionBuilder;
+import com.hubcap.lowlevel.ExpressionEval;
+import com.hubcap.process.ProcessModel;
+import com.hubcap.process.ProcessState;
+import com.hubcap.task.helpers.DebugSearchHelper;
+import com.hubcap.task.helpers.DeepSearchHelper;
+import com.hubcap.task.helpers.DefaultSearchHelper;
+import com.hubcap.task.helpers.ScavengerHelper;
+import com.hubcap.task.helpers.SearchHelperListener;
+import com.hubcap.task.helpers.TaskRunnerHelper;
 import com.hubcap.task.state.TaskRunnerState;
 import com.hubcap.utils.ErrorUtils;
 import com.hubcap.utils.ThreadUtils;
 
+// my access token
+// https://github.com/settings/tokens/new
+// 129bf1a604dd4c46ce235b8d9d6e1ac261e50c1e
 /**
  * @author Decoded4620 2016
  */
 public class TaskRunner implements Runnable {
+
+    // at most 10 percent of CPU when basic search is being done.
+    // task runner Thread metrics
+    public static final float CPU_LOAD_TR = 0.10f;
+
+    public static final float CPU_WAIT_TR = 5f;
+
+    public static final float CPU_COMPUTE_TR = 1f;
+
+    // task runner helper Thread metrics
+    public static final float CPU_LOAD_TRH = 0.05f;
+
+    public static final float CPU_WAIT_TRH = 20f;
+
+    public static final float CPU_COMPUTE_TRH = 1f;
 
     // keeps a sane list of task runners, uses concurrency package
     private static List<TaskRunner> runningTasks = Collections.synchronizedList(new ArrayList<TaskRunner>());
 
     private static List<TaskRunner> freeTasks = Collections.synchronizedList(new ArrayList<TaskRunner>());
 
+    private static List<TaskRunner> unrecoverableErrorTasks = Collections.synchronizedList(new ArrayList<TaskRunner>());
+
     private static List<TaskRunner> orphans = Collections.synchronizedList(new ArrayList<TaskRunner>());
+
+    private static List<TaskRunner> limboTasks = Collections.synchronizedList(new ArrayList<TaskRunner>());
+
+    // any arguments passed in when we're busy will be 'enqueued' here
+    private static List<String[]> busyArgs = Collections.synchronizedList(new ArrayList<String[]>());
+
+    private static List<TaskRunnerListener[]> busyListeners = Collections.synchronizedList(new ArrayList<TaskRunnerListener[]>());
 
     // keeps a sane list of task threads, uses concurrency package
     private static List<Thread> taskThreads = Collections.synchronizedList(new ArrayList<Thread>());
-
-    private static AtomicInteger limboTasks = new AtomicInteger(0);
 
     private static ThreadFactory factory = null;
 
@@ -80,18 +112,142 @@ public class TaskRunner implements Runnable {
 
     private static Thread monitorThread;
 
+    private static Thread pruningThread;
+
+    private static Thread busyMuncherThread;
+
     private static boolean isTaskSystemReady = false;
+
+    /**
+     * If there are more awaiting requests for tasks...
+     * 
+     * @param listeners
+     */
+    public static void getMoreBusyTasks() {
+
+        if (TaskRunner.inactiveTaskCount() == 0) {
+            ThreadUtils.waitUntil(new ExpressionEval() {
+
+                @Override
+                public Object evaluate() {
+                    // TODO Auto-generated method stub
+                    return TaskRunner.inactiveTaskCount() > 0;
+                }
+            }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
+        }
+
+        if (TaskRunner.inactiveTaskCount() >= Constants.MIN_NOT_BUSY_THREAD_COUNT && TaskRunner.waitingTaskCount() > 0) {
+
+            int i = 0;
+            int size = 0;
+            Object[] arr = null;
+            Object[] larr = null;
+            synchronized (TaskRunner.busyArgs) {
+                synchronized (TaskRunner.busyListeners) {
+                    arr = busyArgs.toArray(new Object[busyArgs.size()]);
+                    larr = busyListeners.toArray(new Object[busyListeners.size()]);
+
+                    busyArgs.clear();
+                    busyListeners.clear();
+                }
+            }
+
+            size = arr.length;
+
+            if (size == 0) {
+                return;
+            }
+
+            // find inactive
+            // trim
+            if (size > 0) {
+
+                HubCap.instance().setState(ProcessState.RUNNING);
+
+                for (i = 0; i < size; ++i) {
+                    HubCap.instance().processArgs((String[]) arr[i], (TaskRunnerListener[]) larr[i]);
+                }
+            }
+
+            if (i > 0) {
+                if (TaskRunner.activeTaskCount() == 0) {
+                    // at least one job was added
+                    ThreadUtils.waitUntil(new ExpressionEval() {
+
+                        @Override
+                        public Object evaluate() {
+
+                            boolean ret = TaskRunner.activeTaskCount() > 0 || HubCap.instance().getState() == ProcessState.SHUTDOWN;
+
+                            if (ret) {
+                                if (ProcessModel.instance().getVerbose()) {
+                                    System.out.println("Waited successfully for busy tasks to start.");
+                                }
+                            }
+
+                            return ret;
+                        }
+                    }, -1, Constants.NEW_THREAD_SPAWN_BREATHING_TIME, ProcessModel.instance().getVerbose());
+                }
+            }
+
+        }
+    }
 
     private static void runTask(TaskRunner task) {
         if (!runningTasks.contains(task)) {
+
+            // start the task now
+            task.setTaskState(TaskRunnerState.START);
+
+            limboTasks.remove(task);
+            freeTasks.remove(task);
             runningTasks.add(task);
+            // System.out.println("runTask: " + task + ", available: " +
+            // freeTasks.size());
         }
     }
 
     private static void freeTask(TaskRunner task) {
         if (!freeTasks.contains(task)) {
+
+            limboTasks.remove(task);
+            runningTasks.remove(task);
             freeTasks.add(task);
+            // System.out.println("freeTask: " + task);
         }
+    }
+
+    private static void limboTask(TaskRunner task) {
+
+        if (!limboTasks.contains(task)) {
+            freeTasks.remove(task);
+            runningTasks.remove(task);
+            limboTasks.add(task);
+            // System.out.println("limbo: " + task);
+        }
+    }
+
+    private static void unrecoverableTask(TaskRunner task) {
+        if (task.getTaskState() == TaskRunnerState.ERROR) {
+            if (!unrecoverableErrorTasks.contains(task)) {
+                freeTasks.remove(task);
+                runningTasks.remove(task);
+                limboTasks.remove(task);
+                unrecoverableErrorTasks.add(task);
+                task.setTaskState(TaskRunnerState.SHUTDOWN);
+            }
+        }
+    }
+
+    public static int countBusyArgs() {
+        return busyArgs.size();
+    }
+
+    public static void addBusyArgs(String[] args, TaskRunnerListener[] listeners) {
+        // push both
+        busyArgs.add(args);
+        busyListeners.add(listeners);
     }
 
     /**
@@ -102,84 +258,22 @@ public class TaskRunner implements Runnable {
     public static TaskRunner getNextAvailableRunner() {
 
         TaskRunner ret = null;
-        ArrayList<TaskRunner> fixErrors = new ArrayList<TaskRunner>();
 
         synchronized (freeTasks) {
             Iterator<TaskRunner> i = freeTasks.iterator();
 
             while (i.hasNext()) {
                 TaskRunner runner = i.next();
-                if (runner.getTaskState() == TaskRunnerState.ERROR) {
-                    // replace any errored runners with a new freshy.
-                    // this will go to the end of the list
-                    // so it could feasably be the next available one.
-                    fixErrors.add(runner);
-                } else if (runner.getTaskState() == TaskRunnerState.IDLE || runner.getTaskState() == TaskRunnerState.DORMANT) {
+                if (runner.getTaskState() == TaskRunnerState.IDLE || runner.getTaskState() == TaskRunnerState.DORMANT) {
                     ret = runner;
 
                     // track counted task in 'limbo' until we get
                     // it added to the runningTaskList
                     // this way 'totalTasks' calls will be accurate.
-                    limboTasks.incrementAndGet();
+                    TaskRunner.limboTask(ret);
+                    ret.setTaskState(TaskRunnerState.PRIMED);
                     // prime it now and remove it from the free list
-                    runner.setTaskState(TaskRunnerState.PRIMED);
-                    i.remove();
-                    break;
-                }
-            }
-        }
-
-        if (fixErrors.size() > 0) {
-
-            TaskRunner[] errors = fixErrors.toArray(new TaskRunner[fixErrors.size()]);
-
-            // sanity
-            fixErrors.clear();
-
-            for (int x = 0; x < errors.length; ++x) {
-                TaskRunner currentRunner = errors[x];
-                TaskRunner newOrOrphanedRunner = null;
-                boolean err = false;
-                try {
-
-                    // even tho we stop tracking this object here
-                    // it may still be executing on the threadPool.
-                    // so if we aren't able to execute the next orphan / new
-                    // TaskRunner
-                    // replacement,
-                    // then we'll keep trying for every no task request to
-                    // fix the previous errors.
-                    if (runningTasks.contains(currentRunner)) {
-                        runningTasks.remove(currentRunner);
-                    }
-
-                    // grab an orphan, or make a new runner.
-                    newOrOrphanedRunner = orphans.size() > 0 ? orphans.remove(orphans.size() - 1) : new TaskRunner();
-
-                    threadPool.execute(newOrOrphanedRunner);
-
-                    if (!freeTasks.contains(newOrOrphanedRunner)) {
-                        TaskRunner.freeTask(newOrOrphanedRunner);
-                    }
-
-                } catch (RejectedExecutionException rex) {
-
-                    ErrorUtils.printStackTrace(rex);
-                    err = true;
-                } catch (NullPointerException nex) {
-                    ErrorUtils.printStackTrace(nex);
-                    err = true;
-                } finally {
-                    if (err) {
-                        if (freeTasks.contains(newOrOrphanedRunner)) {
-                            freeTasks.remove(newOrOrphanedRunner);
-                        }
-
-                        if (!orphans.contains(newOrOrphanedRunner)) {
-                            // put it back on the orphan list
-                            orphans.add(newOrOrphanedRunner);
-                        }
-                    }
+                    return ret;
                 }
             }
         }
@@ -196,6 +290,20 @@ public class TaskRunner implements Runnable {
         return isTaskSystemReady;
     }
 
+    public static int waitingTaskCount() {
+
+        int act = 0;
+        synchronized (runningTasks) {
+            synchronized (busyArgs) {
+                synchronized (limboTasks) {
+                    act = runningTasks.size() + busyArgs.size() + limboTasks.size();
+                }
+            }
+        }
+
+        return act;
+    }
+
     /**
      * Thread-safe active task count.
      * 
@@ -207,6 +315,16 @@ public class TaskRunner implements Runnable {
         synchronized (runningTasks) {
             act = runningTasks.size();
         }
+        return act;
+    }
+
+    public static int limboTaskCount() {
+        int act = 0;
+
+        synchronized (limboTasks) {
+            act = limboTasks.size();
+        }
+
         return act;
     }
 
@@ -227,7 +345,7 @@ public class TaskRunner implements Runnable {
         int total;
         synchronized (freeTasks) {
             synchronized (runningTasks) {
-                total = freeTasks.size() + runningTasks.size() + limboTasks.get();
+                total = freeTasks.size() + runningTasks.size() + limboTasks.size();
             }
         }
 
@@ -246,41 +364,58 @@ public class TaskRunner implements Runnable {
                 TaskRunner.factory = null;
             }
 
+            // insure no more threads can be executed.
             threadPool.shutdown();
 
-            for (TaskRunner t : runningTasks) {
-                t.setTaskState(TaskRunnerState.SHUTDOWN);
-            }
-            runningTasks.clear();
+            Object[] set = {
+                runningTasks,
+                freeTasks,
+                limboTasks
+            };
 
-            for (TaskRunner t : freeTasks) {
-                t.setTaskState(TaskRunnerState.SHUTDOWN);
-            }
-            freeTasks.clear();
+            for (Object item : set) {
 
-            if (taskThreads != null) {
-                for (Thread t : taskThreads) {
-                    try {
+                @SuppressWarnings("unchecked")
+                List<TaskRunner> list = (List<TaskRunner>) item;
 
-                        t.interrupt();
-                        if (t.getState() == State.WAITING || t.getState() == State.TIMED_WAITING) {
-                            // stop the this task thread.
-                            t.join();
-                        }
-
-                    } catch (InterruptedException e) {
-                        // let the dev see this error to avoid ultimate hang
-                        ErrorUtils.printStackTrace(e);
+                if (list != null) {
+                    synchronized (list) {
+                        for (TaskRunner t : list)
+                            t.shutdown();
                     }
                 }
-
-                taskThreads.clear();
             }
 
+            synchronized (taskThreads) {
+                for (Thread t : taskThreads)
+                    if (t.getState() != State.TERMINATED)
+                        ThreadUtils.fold(t, false, ProcessModel.instance().getVerbose());
+
+            }
+
+            taskThreads.clear();
+
             if (monitorThread != null) {
+                System.out.println("Killing Monitor thread");
                 monitorThread.interrupt();
                 monitorThread = null;
             }
+
+            if (pruningThread != null) {
+                System.out.println("Killing Pruning thread");
+                pruningThread.interrupt();
+                pruningThread = null;
+            }
+
+            if (busyMuncherThread != null) {
+                System.out.println("Killing busy muncher thread");
+                busyMuncherThread.interrupt();
+                busyMuncherThread = null;
+            }
+
+            runningTasks.clear();
+            freeTasks.clear();
+            limboTasks.clear();
 
             isTaskSystemReady = false;
         }
@@ -328,17 +463,15 @@ public class TaskRunner implements Runnable {
                 // systems that are so 'badass' that we would break the cap. \
                 // (i.e. i have 32 cores and 12 disks = (2*32*12*1(1+5/1) =
                 // 4600 threads, a bit high)...)
-                int numThreads = ThreadUtils.getStableThreadCount(.50f, 20f, 1, Constants.MAX_THREADS);
+                int numThreads = ThreadUtils.getStableThreadCount(CPU_LOAD_TR, CPU_WAIT_TR, CPU_COMPUTE_TR, Constants.MAX_THREADS);
 
-                synchronized (freeTasks) {
-                    System.out.println("creating: " + numThreads + " threads for hubcap");
-                    TaskRunner.threadPool = Executors.newFixedThreadPool(numThreads, TaskRunner.factory);
-                    for (int i = 0; i < numThreads; ++i) {
-                        TaskRunner tr = new TaskRunner();
-                        threadPool.execute(tr);
-                        TaskRunner.freeTask(tr);
-                    }
+                System.out.println("creating: " + numThreads + " threads for hubcap");
+                TaskRunner.threadPool = Executors.newFixedThreadPool(numThreads, TaskRunner.factory);
+                for (int i = 0; i < numThreads; ++i) {
+                    TaskRunner tr = new TaskRunner();
+                    threadPool.execute(tr);
                 }
+
                 // pass the monitoring code to another thread
                 // so we don't block the REPL loop
                 monitorThread = new Thread(new Runnable() {
@@ -348,8 +481,13 @@ public class TaskRunner implements Runnable {
 
                         while (!threadPool.isShutdown()) {
                             try {
+                                TaskRunner.rebalance();
                                 Thread.sleep(Constants.POOL_SHUTDOWN_CHECK_INTERVAL);
+
                             } catch (InterruptedException ex) {
+                                if (ProcessModel.instance().getVerbose()) {
+                                    ErrorUtils.printStackTrace(ex);
+                                }
                                 break;
                             }
                         }
@@ -360,11 +498,12 @@ public class TaskRunner implements Runnable {
                             try {
                                 Thread.sleep(Constants.POOL_TERM_CHECK_INTERVAL);
                             } catch (InterruptedException ex) {
+                                ErrorUtils.printStackTrace(ex);
                                 break;
                             }
                         }
 
-                        System.out.println("Finished all threads");
+                        System.out.println("Thread pool terminated.");
                     }
                 });
 
@@ -373,14 +512,119 @@ public class TaskRunner implements Runnable {
 
                 // start monitoring
                 monitorThread.start();
+
+                System.out.println("Thread pool started!");
             }
         } else {
             throw new IllegalStateException("Hubcap task runner can only be initialized once!");
         }
     }
 
+    public static void rebalance() {
+
+        // spy on any unrecoverable tasks.
+        if (unrecoverableErrorTasks.size() >= Constants.MIN_UNRECOVERABLE_POOL_SIZE && TaskRunner.activeTaskCount() <= Math.floor(Constants.MAX_THREADS / 10)) {
+
+            if (pruningThread == null) {
+                pruningThread = new Thread(new Runnable() {
+
+                    @Override
+                    public void run() {
+                        prune();
+
+                        pruningThread = null;
+                    }
+                });
+                synchronized (pruningThread) {
+                    pruningThread.setName("__PruningThread");
+                    pruningThread.setDaemon(true);
+                    pruningThread.start();
+                }
+            }
+        }
+
+        if (busyMuncherThread == null) {
+            busyMuncherThread = new Thread(new Runnable() {
+
+                @Override
+                public void run() {
+                    // pile on any more busy work if available we don't want
+                    // any idle threads
+                    TaskRunner.getMoreBusyTasks();
+                    busyMuncherThread = null;
+                }
+            });
+
+            synchronized (busyMuncherThread) {
+                busyMuncherThread.setName("__BusyMuncher");
+                busyMuncherThread.setDaemon(true);
+                busyMuncherThread.start();
+            }
+        }
+    }
+
+    private static void prune() {
+
+        TaskRunner[] errors = null;
+        errors = unrecoverableErrorTasks.toArray(new TaskRunner[unrecoverableErrorTasks.size()]);
+        // sanity
+        unrecoverableErrorTasks.clear();
+
+        if (errors.length > 0) {
+
+            for (int x = 0; x < errors.length; ++x) {
+
+                TaskRunner currentRunner = errors[x];
+
+                if (currentRunner == null) {
+                    continue;
+                }
+
+                // sanity in case the task fails to remove itself for
+                // any reason.
+                Thread t = currentRunner.getTaskThread();
+
+                if (t != null) {
+                    taskThreads.remove(t);
+                }
+
+                // remove this from the running list
+                TaskRunner newOrOrphanedRunner = null;
+                boolean err = false;
+                try {
+                    // grab an orphan, or make a new runner.
+                    newOrOrphanedRunner = orphans.size() > 0 ? orphans.remove(orphans.size() - 1) : new TaskRunner();
+
+                    if (HubCap.instance().getState() != ProcessState.SHUTDOWN) {
+                        // runner will add its own thread to the taskthread pool
+                        threadPool.execute(newOrOrphanedRunner);
+                    }
+
+                } catch (RejectedExecutionException rex) {
+                    ErrorUtils.printStackTrace(rex);
+                    err = true;
+                } catch (NullPointerException nex) {
+                    ErrorUtils.printStackTrace(nex);
+                    err = true;
+                } finally {
+                    if (err) {
+                        // put it back on the orphan list
+                        orphans.add(newOrOrphanedRunner);
+                    }
+                }
+            }
+        }
+    }
+
     // uniq id for this task
     private long taskId;
+
+    // The thread running this TaskRunner.
+    private Thread myThread;
+
+    private ExecutorService helperPool = null;
+
+    private ThreadFactory helperFactory = null;
 
     // set of listeners for actions that happen from this Task Runner
     // use concurrent list since listeners may be added from another thread, and
@@ -388,14 +632,26 @@ public class TaskRunner implements Runnable {
     // themselves from it)
     private List<TaskRunnerListener> listeners = Collections.synchronizedList(new ArrayList<TaskRunnerListener>());
 
+    // set of parallel helper threads that can be used to gather results
+    private List<TaskRunnerHelper> helpers = Collections.synchronizedList(new ArrayList<TaskRunnerHelper>());
+
+    private AtomicInteger helperCount = new AtomicInteger(0);
+
+    // the input arguments that were passed to this TaskRunner
     private String[] taskArgs = null;
 
     // the current task state
     private TaskRunnerState taskState = TaskRunnerState.DORMANT;
 
-    private String errorMessage = "";
+    // the current task model
+    private TaskModel taskModel = null;
 
-    private boolean canRecoverFromError = false;
+    // the current error message, if any
+    private String errorMessage = null;
+
+    // if set false, and we're in an ERROR state
+    // this thread will be abandoned and a new one created.
+    private boolean canRecoverFromError = true;
 
     /**
      * Private Constructor, use 'createNew()' to make new task runners.
@@ -410,6 +666,14 @@ public class TaskRunner implements Runnable {
         // getTime() returns milliseconds, and milliseconds are rather long in
         // the scheme of things.
         taskId += Math.abs(r.nextLong());
+    }
+
+    public Thread getTaskThread() {
+        return myThread;
+    }
+
+    public TaskModel getTaskModel() {
+        return taskModel;
     }
 
     /**
@@ -444,17 +708,6 @@ public class TaskRunner implements Runnable {
         return this.taskState;
     }
 
-    private void setTaskState(TaskRunnerState state) {
-        if (this.taskState != state) {
-            this.taskState = state;
-            TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
-            for (int i = 0; i < list.length; i++) {
-                TaskRunnerListener listener = list[i];
-                listener.onTaskStateChange(this, state);
-            }
-        }
-    }
-
     public void shutdown() {
         setTaskState(TaskRunnerState.SHUTDOWN);
         this.taskArgs = null;
@@ -471,7 +724,9 @@ public class TaskRunner implements Runnable {
         if (this.taskState == TaskRunnerState.PRIMED) {
             // start the task. No more input will be accepted
             this.taskArgs = args;
-            setTaskState(TaskRunnerState.START);
+
+            // run the task now
+            TaskRunner.runTask(this);
         }
     }
 
@@ -479,11 +734,36 @@ public class TaskRunner implements Runnable {
      * Processes the 'START' state
      */
     protected void processStateStart() {
+
         if (this.taskState == TaskRunnerState.START) {
 
-            runningTasks.add(this);
-            // state is out of limbo now
-            limboTasks.decrementAndGet();
+            if (helperPool == null) {
+
+                // get a stable thread count up to MAX_HELPER_THREADS based on
+                // CPU LOAD per helper
+                int maxHelpers = ThreadUtils.getStableThreadCount(CPU_LOAD_TRH, CPU_WAIT_TRH, CPU_COMPUTE_TRH, Constants.MAX_HELPER_THREADS);
+
+                if (this.helperFactory == null) {
+                    this.helperFactory = new ThreadFactory() {
+
+                        @Override
+                        public Thread newThread(Runnable r) {
+                            if (helpers.contains(r)) {
+                                throw new IllegalStateException("Cannot add duplicate runnable to running tasks");
+                            }
+
+                            Thread thread = new Thread(r);
+                            thread.setDaemon(false);
+                            thread.setName("TaskRunnerHelper-" + helperCount.getAndIncrement());
+                            taskThreads.add(thread);
+                            return thread;
+                        }
+                    };
+                }
+
+                // create the pool but don't fire up any helpers
+                helperPool = Executors.newFixedThreadPool(maxHelpers, TaskRunner.factory);
+            }
 
             TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
 
@@ -492,54 +772,20 @@ public class TaskRunner implements Runnable {
                 listener.onTaskStart(this);
             }
 
-            if (this.taskArgs.length > 0) {
-                // we're now in progress
-                // System.out.println("TaskRunner::processStateStart() - state: "
-                // + this.taskState + " args: " + this.taskArgs.length);
-
+            try {
+                // create the task model using the input arguments
                 setTaskState(TaskRunnerState.ACTIVE);
 
-                Options options = new Options();
-                CommandLineParser parser = new DefaultParser();
+                this.taskModel = CLIOptionBuilder.buildInputOptionsModel(this.taskArgs);
 
-                try {
-                    CLIOptionBuilder.buildApacheOptions(options);
+            } catch (ParseException e) {
 
-                    CommandLine cmd = parser.parse(options, this.taskArgs);
-
-                    String[] argv = cmd.getArgs();
-                    Properties opts = cmd.getOptionProperties("D");
-
-                    // opts.keySet();
-                    // System.out.print("Args: ");
-                    // for (String arg : argv) {
-                    // System.out.print(arg + " ");
-                    // }
-                    // System.out.print("\nOpts: ");
-                    // Set<Object> keys = opts.keySet();
-                    // for (Object key : keys) {
-                    // System.out.print("[" + key + "]=" +
-                    // opts.getProperty(key.toString()) + ",  ");
-                    // }
-
-                    // automatically generate the help statement
-                    // HelpFormatter formatter = new HelpFormatter();
-                    // formatter.printHelp("sample", options);
-
-                } catch (ParseException e) {
-
-                    ErrorUtils.printStackTrace(e);
-
-                    setTaskState(TaskRunnerState.ERROR);
-                    this.canRecoverFromError = true;
-                    this.errorMessage = "Inputs were malformed, please try again";
-                }
-
-            } else {
+                ErrorUtils.printStackTrace(e);
                 setTaskState(TaskRunnerState.ERROR);
-                this.errorMessage = "You must provide at least one argument to run a HubCap Task";
                 this.canRecoverFromError = true;
+                this.errorMessage = "Inputs were malformed, please try again";
             }
+
         } else {
             System.err.println("Can't Start...Task State is: " + this.taskState);
         }
@@ -555,173 +801,231 @@ public class TaskRunner implements Runnable {
             } catch (InterruptedException e) {
                 setTaskState(TaskRunnerState.SHUTDOWN);
             }
-        }
-    }
-
-    private List<Object> aggregateData = Collections.synchronizedList(new ArrayList<Object>());
-
-    protected void aggregateData(Object moreData) {
-        if (aggregateData.contains(moreData) == false) {
-            aggregateData.add(moreData);
+        } else {
+            System.err.println("cannot processIdle if state is not IDLE.");
         }
     }
 
     /**
-     * Process some data for the current task. This may not be the only data, so
-     * it will be 'aggregated'
+     * Aggregates data on a list.
      * 
-     * @param data
-     *            a <code>Object</code> of any type including primitive wrappers
-     *            (Boolean, Integer, Float, Double, Long )
+     * @param moreData
      */
-    private void processTaskData(Object data) {
-
-        TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
-
-        for (int i = 0; i < list.length; i++) {
-            TaskRunnerListener listener = list[i];
-            listener.onTaskDataReceived(this, data);
+    protected void aggregateData(Object moreData) {
+        if (this.taskState == TaskRunnerState.ACTIVE) {
+            taskModel.aggregate(moreData);
         }
     }
 
-    // TODO - DELETE THIS BEFORE SHIPPING!
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // !!!! DELETE ME START
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    class FakeTaskData {
-
-        private double data = 0.0D;
-
-        public FakeTaskData() {
-        }
-
-        public void setFakeData(double fakeData) {
-            this.data = fakeData;
-        }
-
-        public double getFakeData() {
-            return this.data;
+    /**
+     * Aggregates data for a specified key
+     * 
+     * @param key
+     * @param moreData
+     */
+    protected void aggregateDataForKey(String key, Object moreData) {
+        if (this.taskState == TaskRunnerState.ACTIVE) {
+            taskModel.aggregateForKey(key, moreData);
         }
     }
 
-    public static long workTime = Constants.FAKE_WORK_TIME;
+    /**
+     * Spawns a TaskRunnerHelper which performs some task in aggregation of the
+     * data we want. Sometimes there is only a single helper. But for scavenger
+     * mode, etc there can be many. The helperPool supports multiple for that
+     * reason.
+     * 
+     * @param helper
+     */
+    protected TaskRunnerHelper spawnHelper(Class<? extends TaskRunnerHelper> clazz, SearchHelperListener listener) {
+        try {
 
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // !!!! DELETE ME END
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            Constructor<?> c = clazz.getConstructors()[0];
+            TaskRunnerHelper helper = (TaskRunnerHelper) c.newInstance(this);
+            try {
+
+                helperPool.execute(helper);
+                this.helpers.add(helper);
+                helper.setListener(listener);
+                return helper;
+            } catch (RejectedExecutionException ex) {
+                ErrorUtils.printStackTrace(ex);
+            }
+        } catch (IllegalAccessException ex) {
+            ErrorUtils.printStackTrace(ex);
+        } catch (InstantiationException ex) {
+            ErrorUtils.printStackTrace(ex);
+        } catch (InvocationTargetException ex) {
+            ErrorUtils.printStackTrace(ex);
+        }
+
+        return null;
+    }
+
     /**
      * Process the ACTIVE state
      */
     protected void processStateActive() {
 
         if (this.getTaskState() == TaskRunnerState.ACTIVE) {
-            // try {
-            // System.out.println("TaskRunner::processStateActive() - start task");
-            // fake work here
 
-            double random = Math.random();
+            if (taskModel != null) {
+                // the task mode
+                TaskRunnerHelper helper = null;
 
-            // X % of jobs will fail with severe error (to test this case)
-            if (random < .005) {
-                setTaskState(TaskRunnerState.ERROR);
-                this.canRecoverFromError = random > .002;
-                this.errorMessage = "Random Severe failure occurred!!!";
-            } else {
-                long now = new Date().getTime();
-                int i = 0;
-                int b = 0;
-                int deltaMax = (int) (Constants.FREE_TASK_RUNNER_WAIT_TIME + Math.random() * TaskRunner.workTime);
+                // default listener
+                SearchHelperListener listener = new SearchHelperListener() {
 
-                // TODO - DELETE THIS BEFORE SHIPPING!
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                // !!!! DELETE ME START
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    @Override
+                    public void processTaskHelperError(Exception ex, boolean canRecover) {
+                        // TODO Auto-generated method stub
+                        TaskRunner.this.setTaskState(TaskRunnerState.ERROR);
 
-                while ((new Date().getTime()) - now < deltaMax) {
-                    double x = 2 * 3 / 4 + 56 * 3.14150 * 5f;
+                        errorMessage = ErrorUtils.getStackTrace(ex);
+                        canRecoverFromError = canRecover;
 
-                    ++i;
+                        TaskRunner.this.setTaskState(TaskRunnerState.ERROR);
 
-                    if (i % 200000 == 0) {
-                        try {
-                            b++;
-                            Thread.sleep(Constants.TEST_WAIT_TIME * 4);
-
-                            // Fake some task data here
-                            FakeTaskData fdata = new FakeTaskData();
-                            fdata.setFakeData(b * i * x);
-                            processTaskData(fdata);
-                        } catch (InterruptedException e) {
-                            break;
+                        if (ProcessModel.instance().getVerbose()) {
+                            ErrorUtils.printStackTrace(ex);
                         }
                     }
+
+                    @Override
+                    public void processTaskHelperData(Object taskData) {
+                        processTaskData(taskData);
+
+                    }
+
+                    @Override
+                    public void processTaskHelperDataForKey(String key, Object taskData) {
+                        processTaskDataForKey(key, taskData);
+                    }
+                };
+
+                switch (taskModel.getTaskMode()) {
+                    case SEARCH:
+                        helper = this.spawnHelper(DefaultSearchHelper.class, listener);
+                        break;
+                    case DEEP_SEARCH:
+                        helper = this.spawnHelper(DeepSearchHelper.class, listener);
+                        break;
+                    case SCAVENGER:
+                        helper = this.spawnHelper(ScavengerHelper.class, listener);
+                    case DEBUG: {
+
+                        // special debug listener
+                        SearchHelperListener debugListener = new SearchHelperListener() {
+
+                            @Override
+                            public void processTaskHelperError(Exception ex, boolean canRecover) {
+                                // TODO Auto-generated method stub
+                                TaskRunner.this.setTaskState(TaskRunnerState.ERROR);
+
+                                errorMessage =
+                                        canRecover ? "A minor error happened, task will reset, results may be unavailable."
+                                                : "A severe failure happened, task thread unrecoverable.";
+                                TaskRunner.this.setTaskState(TaskRunnerState.ERROR);
+
+                                System.err.println("Process Task Helper Error");
+                                if (ProcessModel.instance().getVerbose()) {
+                                    ErrorUtils.printStackTrace(ex);
+                                }
+                            }
+
+                            @Override
+                            public void processTaskHelperData(Object taskData) {
+                                processTaskData(taskData);
+
+                            }
+
+                            @Override
+                            public void processTaskHelperDataForKey(String key, Object taskData) {
+                                processTaskDataForKey(key, taskData);
+                            }
+                        };
+                        helper = this.spawnHelper(DebugSearchHelper.class, debugListener);
+                        break;
+                    }
+                    default:
+                        break;
                 }
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                // !!!! DELETE ME END
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            }
 
+            this.helperPool.shutdown();
+
+            while (!this.helperPool.isTerminated()) {
+                if (!ThreadUtils.safeSleep(Constants.IDLE_TIME, ProcessModel.instance().getVerbose())) {
+                    this.helperPool.shutdownNow();
+                    break;
+                }
+            }
+
+            // only set idle if we weren't shutdown
+            if (this.getTaskState() != TaskRunnerState.SHUTDOWN && getTaskState() != TaskRunnerState.ERROR) {
                 setTaskState(TaskRunnerState.COMPLETE);
-
-                // Nth percentile only
-                double multiplier = 1.05;
-
-                // only if we build up
-                // if (TaskRunner.activeTaskCount() > runningTasks.size() /
-                // multiplier) {
-                // System.out.println("Task[" + this.taskId +
-                // "] complete, processed: " + i + " items with " + b +
-                // " sleep breaks, " + TaskRunner.inactiveTaskCount()
-                // + " remaining,  time: " + ((new Date().getTime()) - now) +
-                // "ms");
-                // }
-
-                // } catch (InterruptedException e) {
-                // this.taskState = TaskRunnerState.SHUTDOWN;
-                // }
             }
         }
+
     }
 
     protected void processStateComplete() {
-
         if (this.taskState == TaskRunnerState.COMPLETE) {
-            runningTasks.remove(this);
-            limboTasks.incrementAndGet();
             TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
             this.listeners.clear();
 
-            for (int i = 0; i < list.length; i++) {
+            int lLen = list.length;
+            for (int i = 0; i < lLen; i++) {
                 TaskRunnerListener listener = list[i];
-                listener.onTaskComplete(this, this.aggregateData);
+                listener.onTaskComplete(this);
             }
 
-            limboTasks.decrementAndGet();
+            // clear any data so we don't leak
+            taskModel = null;
+
+            // only set idle if we weren't shutdown
+            if (this.getTaskState() != TaskRunnerState.SHUTDOWN && this.getTaskState() != TaskRunnerState.ERROR) {
+                setTaskState(TaskRunnerState.IDLE);
+            }
+
+            // free at the very end
             TaskRunner.freeTask(this);
-            setTaskState(TaskRunnerState.IDLE);
         }
+    }
+
+    protected void processStateShutdown() {
+        TaskRunner.freeTask(this);
     }
 
     protected void processStateError() {
 
         if (this.taskState == TaskRunnerState.ERROR) {
 
-            runningTasks.remove(this);
-            limboTasks.incrementAndGet();
             TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
             this.listeners.clear();
 
             for (int i = 0; i < list.length; i++) {
                 TaskRunnerListener listener = list[i];
-                listener.onTaskError(this, new Exception(this.errorMessage), this.canRecoverFromError);
+                if (listener != null) {
+                    listener.onTaskError(this, new Exception(this.errorMessage), this.canRecoverFromError);
+                }
             }
-            limboTasks.decrementAndGet();
 
-            if (this.canRecoverFromError == false) {
-                setTaskState(TaskRunnerState.SHUTDOWN);
-            } else {
+            // clear any data so we don't leak
+            this.taskModel = null;
+
+            if (this.canRecoverFromError == true) {
+                // only set idle if we weren't shutdown
                 TaskRunner.freeTask(this);
-                setTaskState(TaskRunnerState.IDLE);
+
+                if (this.getTaskState() != TaskRunnerState.SHUTDOWN) {
+                    setTaskState(TaskRunnerState.IDLE);
+                }
+            } else {
+                TaskRunner.unrecoverableTask(this);
             }
+        } else {
+            System.err.println(getTaskId() + "::processStateError() FAIL! Cannot process error state, state is: " + this.taskState);
         }
     }
 
@@ -731,24 +1035,48 @@ public class TaskRunner implements Runnable {
      */
     @Override
     public void run() {
-        // System.out.println("TaskRunner::Start()");
+        myThread = Thread.currentThread();
+
+        if (taskThreads.contains(myThread) == false) {
+            taskThreads.add(myThread);
+        }
+
+        // sanity
+        TaskRunner.freeTask(this);
+
         while (this.taskState != TaskRunnerState.SHUTDOWN) {
 
             // process a healthy tick
             tick();
 
-            if (this.taskState == TaskRunnerState.ERROR) {
-                // tick once more to process the error
-                tick();
-                System.err.println("ERROR");
+            if (!ThreadUtils.safeSleep(Constants.TICK_INTERVAL, ProcessModel.instance().getVerbose())) {
+
+                if (this.taskState == TaskRunnerState.ACTIVE) {
+
+                    this.setTaskState(TaskRunnerState.SHUTDOWN);
+
+                    if (ProcessModel.instance().getVerbose()) {
+                        System.err.println("Shutting down active task " + getTaskId() + "!!!!");
+                    }
+                } else {
+                    if (ProcessModel.instance().getVerbose()) {
+                        System.out.println("Task " + getTaskId() + " Shutdown normally, state was: " + this.taskState);
+                    }
+                }
+
                 break;
             }
-            try {
-                Thread.sleep(Constants.TICK_INTERVAL);
-            } catch (InterruptedException e) {
-                setTaskState(TaskRunnerState.SHUTDOWN);
-                break;
-            }
+        }
+
+        // flush out any state.
+        tick();
+
+        if (taskThreads.contains(myThread)) {
+            taskThreads.remove(myThread);
+        }
+
+        if (myThread != ThreadUtils.getMainThread()) {
+            ThreadUtils.fold(myThread, false, ProcessModel.instance().getVerbose());
         }
     }
 
@@ -793,10 +1121,56 @@ public class TaskRunner implements Runnable {
                 processStateError();
                 break;
 
+            case SHUTDOWN:
+                processStateShutdown();
+                break;
+
             default:
+                System.err.println("Unknown State Not Supported! " + this.taskState);
                 // error case!
                 setTaskState(TaskRunnerState.SHUTDOWN);
                 break;
         }
     }
+
+    private void processTaskDataForKey(String key, Object data) {
+        taskModel.aggregateForKey(key, data);
+        TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
+
+        for (int i = 0; i < list.length; i++) {
+            TaskRunnerListener listener = list[i];
+            listener.onTaskDataReceived(this);
+        }
+    }
+
+    /**
+     * Process some data for the current task. This may not be the only data, so
+     * it will be 'aggregated'
+     * 
+     * @param data
+     *            a <code>Object</code> of any type including primitive wrappers
+     *            (Boolean, Integer, Float, Double, Long )
+     */
+    private void processTaskData(Object data) {
+
+        taskModel.aggregate(data);
+        TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
+
+        for (int i = 0; i < list.length; i++) {
+            TaskRunnerListener listener = list[i];
+            listener.onTaskDataReceived(this);
+        }
+    }
+
+    private void setTaskState(TaskRunnerState state) {
+        if (this.taskState != state) {
+            this.taskState = state;
+            TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
+            for (int i = 0; i < list.length; i++) {
+                TaskRunnerListener listener = list[i];
+                listener.onTaskStateChange(this, state);
+            }
+        }
+    }
+
 }

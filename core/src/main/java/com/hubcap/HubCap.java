@@ -1,17 +1,19 @@
 package com.hubcap;
 
-import java.lang.Thread.State;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.hubcap.lowlevel.StringUtils;
+import com.hubcap.process.ProcessModel;
+import com.hubcap.process.ProcessState;
 import com.hubcap.task.TaskRunner;
 import com.hubcap.task.TaskRunnerListener;
 import com.hubcap.task.state.TaskRunnerState;
 import com.hubcap.utils.ErrorUtils;
+import com.hubcap.utils.ThreadUtils;
 
 /*
  * #%L
@@ -64,6 +66,8 @@ public class HubCap {
     public static void main(String[] args) throws Exception {
         System.out.println("Starting Hubcap");
 
+        ThreadUtils.setMainThread(Thread.currentThread());
+
         HubCap instance = HubCap.instance();
 
         // process any initial arguments
@@ -79,9 +83,6 @@ public class HubCap {
     // The REPL
     private REPL repl = null;
 
-    // any arguments passed in when we're busy will be 'enqueued' here
-    private List<String[]> busyArgs = Collections.synchronizedList(new ArrayList<String[]>());
-
     private AtomicLong jobsRequested = new AtomicLong();
 
     private AtomicLong jobsStarted = new AtomicLong();
@@ -92,14 +93,14 @@ public class HubCap {
 
     private AtomicLong jobsErrored = new AtomicLong();
 
+    private AtomicLong jobsCantRecover = new AtomicLong();
+
     private AtomicLong jobsCompleted = new AtomicLong();
 
     /**
      * private CTOR, use HubCap.instance()
      */
     private HubCap() {
-        // create the REPL
-        repl = new REPL(this);
     }
 
     public REPL repl() {
@@ -120,28 +121,53 @@ public class HubCap {
         }
     }
 
+    private Object mutex = new Object();
+
+    private Thread shutdownThread;
+
     /**
      * Shutdown the current TaskSystem, regardless if tasks are running. This
      * will interrupt all threads.
      */
     public void shutdown() {
-        if (this.getState() != ProcessState.SHUTDOWN) {
-            // ErrorUtils.printStackTrace(new Exception("SHUTDOWN!!"));
-            this.setState(ProcessState.SHUTDOWN);
+        synchronized (mutex) {
+            if (this.getState() != ProcessState.SHUTDOWN) {
+                ErrorUtils.printStackTrace(new Exception("SHUTDOWN!!"));
+                this.setState(ProcessState.SHUTDOWN);
+                if (shutdownThread == null) {
 
-            HubCap.instance().report();
+                    // spawn a daemon
+                    shutdownThread = new Thread(new Runnable() {
 
-            shutdownREPL();
+                        @Override
+                        public void run() {
+                            System.out.println("Spawned shutdown thread...");
+                            if (ThreadUtils.safeSleep(Constants.IDLE_TIME, ProcessModel.instance().getVerbose())) {
+                                HubCap.instance().report();
 
-            System.out.println("Shutdown threadpool");
-            TaskRunner.stopThreadPool();
+                                shutdownREPL();
 
-            ErrorUtils.safeSleep(Constants.IDLE_TIME);
+                                System.out.println("Shutdown threadpool");
+                                TaskRunner.stopThreadPool();
+
+                                if (!ThreadUtils.safeSleep(Constants.IDLE_TIME, ProcessModel.instance().getVerbose())) {
+                                    return;
+                                }
+                            }
+                            System.out.println("Exiting shutdown thread..");
+                        }
+                    });
+                    shutdownThread.setName("Shutdown Thread");
+                    shutdownThread.setDaemon(true);
+                    shutdownThread.start();
+                }
+            }
         }
     }
 
     public void report() {
         System.out.println("---REPORT---");
+        System.out.println("   - Total Tasks: " + TaskRunner.totalTaskCount());
         System.out.println("   - Active: " + TaskRunner.activeTaskCount());
         System.out.println("   - Free: " + TaskRunner.inactiveTaskCount());
         System.out.println("   - Jobs Requested: " + jobsRequested.get());
@@ -150,32 +176,15 @@ public class HubCap {
         System.out.println("   - Jobs Updates: " + jobDataUpdates.get());
         System.out.println("   - Jobs State Changes: " + jobStateChanges.get());
         System.out.println("   - jobs inError: " + jobsErrored.get());
-        System.out.println("   - jobs in limbo: " + (TaskRunner.totalTaskCount() - (TaskRunner.activeTaskCount() + TaskRunner.inactiveTaskCount())));
+        System.out.println("   - unrecoverable Jobs: " + jobsCantRecover.get());
+        System.out.println("   - jobs in limbo: " + (TaskRunner.limboTaskCount()));
         System.out.println("   - lost jobs: " + (jobsStarted.get() - (jobsCompleted.get() + jobsErrored.get())));
         System.out.println("   - never started jobs: " + (jobsRequested.get() - jobsStarted.get()));
-        System.out.println("   - busy args remaining: " + busyArgs.size());
+        System.out.println("   - busy args remaining: " + TaskRunner.countBusyArgs());
     }
 
     public boolean isREPL() {
         return (replThread != null && replThread.getState() != Thread.State.TERMINATED);
-    }
-
-    private void startREPL() {
-        if (replThread == null) {
-            System.out.println("startREPL()");
-            replThread = new Thread(repl);
-            replThread.setName("HubCap-REPL");
-            replThread.start();
-        }
-    }
-
-    private void shutdownREPL() {
-        if (replThread != null) {
-            System.out.println("shtdownREPL");
-            replThread.interrupt();
-            System.out.println("repl shutdown!");
-            replThread = null;
-        }
     }
 
     /**
@@ -200,33 +209,33 @@ public class HubCap {
             startup();
         }
 
-        // test for a shutdown or exit command first
-        for (int i = 0; i < args.length; i++) {
-            String currArg = args[i];
-            if (currArg.equals(Constants.CMD_EXIT) || currArg.equals(Constants.CMD_BYE) || currArg.equals(Constants.CMD_DIE) || currArg.equals(Constants.CMD_QUIT)) {
-                shutdown();
-                break;
-            }
+        // if we're already busy, or there are busy args left to munch
+        // just push ours on the end and bail.
+        if (this.state == ProcessState.BUSY || TaskRunner.countBusyArgs() > 0) {
+            ret = 2;
+            TaskRunner.addBusyArgs(args, listeners);
+            return ret;
         }
 
         // No Arguments = REPL MODE
         if (args.length == 0) {
-            this.setState(ProcessState.REPL);
-            startREPL();
+            System.out.println("No args, going REPL");
+            if (!this.isREPL()) {
+                startREPL();
+            }
         }
         // Arguments with length > 0 are pushed to a TaskRunner
         else {
-            shutdownREPL();
+
+            // shutdown the REPLThread while the tasks are running
+            if (isREPL()) {
+                shutdownREPL();
+            }
 
             jobsRequested.incrementAndGet();
 
             // find a free task
             TaskRunner runner = null;
-
-            // mark the time
-            long now = (new Date()).getTime();
-            long totalSearchTime = 0;
-            boolean searchTimeout = false;
 
             runner = TaskRunner.getNextAvailableRunner();
 
@@ -236,64 +245,48 @@ public class HubCap {
 
                 runner.addListener(new TaskRunnerListener() {
 
-                    private boolean didStart = false;
-
-                    private boolean didComplete = false;
-
-                    private long startTime;
-
-                    private long endTime;
-
                     @Override
                     public void onTaskStateChange(TaskRunner runner, TaskRunnerState state) {
-                        jobStateChanges.getAndIncrement();
+                        jobStateChanges.incrementAndGet();
                     }
 
                     @Override
                     public void onTaskStart(TaskRunner runner) {
-                        if (!didStart && !didComplete) {
-                            didStart = true;
-                            jobsStarted.getAndIncrement();
-                            startTime = (new Date().getTime());
-                        }
-
+                        jobsStarted.incrementAndGet();
                     }
 
                     @Override
                     public void onTaskError(TaskRunner runner, Exception e, boolean canRecoverFromError) {
-                        if (didStart && !didComplete) {
-                            jobsErrored.getAndIncrement();
+                        jobsErrored.incrementAndGet();
 
-                            endTime = (new Date().getTime());
-
-                            pruneTasks(listeners);
-                        } else {
-                            ErrorUtils.printStackTrace(new Exception("UH OH"));
+                        if (!canRecoverFromError) {
+                            jobsCantRecover.incrementAndGet();
                         }
 
-                        didStart = false;
-                        didComplete = false;
                     }
 
                     @Override
-                    public void onTaskDataReceived(TaskRunner runner, Object taskData) {
-                        jobDataUpdates.getAndIncrement();
+                    public void onTaskDataReceived(TaskRunner runner) {
+                        jobDataUpdates.incrementAndGet();
                     }
 
                     @Override
-                    public void onTaskComplete(TaskRunner runner, Object aggregatedResults) {
-                        if (didStart && !didComplete) {
-                            didComplete = true;
-                            endTime = (new Date().getTime());
+                    public void onTaskComplete(TaskRunner runner) {
 
-                            jobsCompleted.getAndIncrement();
-                            pruneTasks(listeners);
+                        jobsCompleted.incrementAndGet();
+
+                        if (ProcessModel.instance().getREPLFallback()) {
+                            // once this task completes
+                            // check the process model for REPL Fallback
+                            // if we're the final task
+                            if (TaskRunner.waitingTaskCount() == 1) {
+                                startREPL();
+                            }
                         } else {
-                            ErrorUtils.printStackTrace(new Exception("UH OH"));
+                            if (TaskRunner.waitingTaskCount() == 1) {
+                                shutdown();
+                            }
                         }
-
-                        didStart = false;
-                        didComplete = false;
                     }
                 });
 
@@ -305,9 +298,8 @@ public class HubCap {
 
             } else {
                 this.setState(ProcessState.BUSY);
-
                 jobsRequested.decrementAndGet();
-                busyArgs.add(args);
+                TaskRunner.addBusyArgs(args, listeners);
             }
         }
 
@@ -324,24 +316,23 @@ public class HubCap {
         return this.state;
     }
 
-    private void pruneTasks(TaskRunnerListener[] listeners) {
-        if (TaskRunner.inactiveTaskCount() > Constants.MIN_NOT_BUSY_THREAD_COUNT || TaskRunner.activeTaskCount() == 0) {
-            HubCap.this.setState(ProcessState.RUNNING);
-
-            synchronized (busyArgs) {
-
-                // find inactive
-
-                int i = 0;
-                while (TaskRunner.inactiveTaskCount() > 0 && HubCap.this.getState() != ProcessState.BUSY && busyArgs.size() > 0) {
-                    HubCap.this.processArgs(busyArgs.remove(0), listeners);
-                    ++i;
-                }
-
-                if (i > 0) {
-                    System.out.println("Added " + i + " busy args to munch, " + busyArgs.size() + " remain!");
-                }
-            }
+    public void startREPL() {
+        if (replThread == null) {
+            System.out.println("startREPL()");
+            repl = new REPL(this);
+            replThread = new Thread(repl);
+            replThread.setName("HubCap-REPL " + (new Date().getTime()));
+            replThread.start();
         }
     }
+
+    public void shutdownREPL() {
+        if (replThread != null) {
+            System.out.println("HubCap::shutdownREPL()");
+            repl.shutdown();
+            repl = null;
+            replThread = null;
+        }
+    }
+
 }

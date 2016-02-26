@@ -43,20 +43,30 @@ public class Constants {
      * this tool is open. Changing this to a larger number will likely affect
      * performance when running multiple Scavenge mode jos.
      */
-    public static final int MAX_THREADS = 1000;
+    public static final int MAX_THREADS = 64;
 
     /**
-     * The amount of time to wait for a free Task Runner to process a new
-     * command before timing out the request completely. This is generous to
-     * insure we don't time out on big tasks.
+     * The maximum number of concurrent helper threads that can run within a
+     * single task runner.
      */
-    public static final int CMD_TIMEOUT_MS = 100;
+    public static final int MAX_HELPER_THREADS = 12;
+
+    /**
+     * The number of milliseconds that a task runner can run without producing
+     * results prior to abandoning its own task. Task Runners are self
+     * monitoring so they know how long they've been running, etc.
+     */
+    public static final int CMD_TIMEOUT_MS = 5000;
+
+    public static final int TASK_RUN_STOP_WAIT_TIME_MS = 100;
 
     /**
      * The number of milliseconds that HubCap will sleep if there are no free
      * Task Runners before it searches again.
      */
     public static final int FREE_TASK_RUNNER_WAIT_TIME = 64;
+
+    public static final int NEW_THREAD_SPAWN_BREATHING_TIME = 100;
 
     /**
      * Number milliseconds between 'tick' calls. (17 ms = 60 frames)
@@ -66,7 +76,7 @@ public class Constants {
     /**
      * Amount of time to wait between checks for a shutdown status.
      */
-    public static final int POOL_SHUTDOWN_CHECK_INTERVAL = 128;
+    public static final int POOL_SHUTDOWN_CHECK_INTERVAL = 400;
 
     public static final int POOL_TERM_CHECK_INTERVAL = 128;
 
@@ -74,7 +84,7 @@ public class Constants {
      * Once BUSY state is set, this many threads must complete before a not-busy
      * state will be restored.
      */
-    public static final int MIN_NOT_BUSY_THREAD_COUNT = MAX_THREADS / 3;
+    public static final int MIN_NOT_BUSY_THREAD_COUNT = (int) Math.ceil(MAX_THREADS * .25);
 
     /**
      * Allows the thread to sleep most of the time during 'idle', but respond
@@ -84,6 +94,15 @@ public class Constants {
 
     public static final int MINI_TIME = 10;
 
+    // if we start hitting
+    public static final int PRUNE_BOUNDS_LOW = (int) Math.floor(MAX_THREADS * .05);
+
+    public static final int PRUNE_BOUNDS_HIGH = (int) Math.ceil(MAX_THREADS * .75);
+
+    // at least 10% of all threads must be unrecoverable before we start the
+    // pruner.
+    public static final int MIN_UNRECOVERABLE_POOL_SIZE = (int) Math.floor(MAX_THREADS * .025);
+
     // Exit synonyms
     public static final String CMD_EXIT = "exit";
 
@@ -92,6 +111,8 @@ public class Constants {
     public static final String CMD_DIE = "die";
 
     public static final String CMD_BYE = "bye";
+
+    public static final String CMD_AUTH = "auth";
 
     // =====================================================
     // Testing Constants
@@ -103,6 +124,6 @@ public class Constants {
      */
     public static final int FAKE_WORK_TIME = 500;
 
-    public static final int FAKE_WORK_TIME_HEAVY = 2500;
+    public static final int FAKE_WORK_TIME_HEAVY = 1500;
 
 }

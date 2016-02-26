@@ -44,34 +44,38 @@ public class ErrorUtils {
     }
 
     /**
-     * Wait safely, returns true if wait finished normally. Returns false
-     * otherwise. Blocking.
+     * Stack trace for any number of exceptions
      * 
-     * @param factory
+     * @param e
      * @return
      */
-    public static boolean safeWait(Object factory) {
-        try {
-            factory.wait();
-            return true;
-        } catch (InterruptedException ex) {
-            return false;
+    public static String getStackTrace(Exception... e) {
+        if (e == null) {
+            e = new Exception[0];
+            e[0] = new Exception("Debug ErrorUtils Excetion");
         }
+        if (e != null) {
+
+            StringBuilder st = new StringBuilder();
+            for (int i = 0; i < e.length; i++) {
+                Exception ex = e[i];
+                st.append(ex.getClass().getName() + "::");
+                st.append((ex.getMessage() == null || ex.getMessage().equals("")) ? e.toString() : ex.getMessage() + "\n");
+                StackTraceElement[] elements = ex.getStackTrace();
+
+                for (int j = 0; j < elements.length; j++) {
+                    StackTraceElement element = elements[j];
+
+                    st.append("    - (at " + element.getClassName() + ":" + element.getLineNumber() + ")\n");
+                }
+
+                st.append("\n\n");
+            }
+
+            return st.toString();
+        }
+
+        return "";
     }
 
-    /**
-     * Wrapper for <code>Thread.sleep</code> that makes it safe.
-     * 
-     * @param millis
-     *            a <code>long</code>
-     */
-    public static boolean safeSleep(long millis) {
-        try {
-            Thread.sleep(millis);
-            return true;
-        } catch (InterruptedException ex) {
-            ErrorUtils.printStackTrace(ex);
-            return false;
-        }
-    }
 }

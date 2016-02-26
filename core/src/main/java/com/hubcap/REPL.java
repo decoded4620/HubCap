@@ -1,5 +1,9 @@
 package com.hubcap;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+
 /*
  * #%L
  * HubCap-Core
@@ -27,7 +31,10 @@ package com.hubcap;
  */
 
 import java.util.ArrayList;
-import java.util.Scanner;
+import java.util.concurrent.Callable;
+
+import com.hubcap.process.ProcessModel;
+import com.hubcap.utils.ThreadUtils;
 
 /**
  * The Read-Eval-Print-Loop for HubCap
@@ -62,7 +69,7 @@ public class REPL implements Runnable {
      * @return a <code>String[]</code> of arguments to pass to a TaskRunner for
      *         processing.
      */
-    public String[] processREPLInput(String input) {
+    public static String[] processREPLInput(String input) {
 
         String[] argList;
         ArrayList<String> args = new ArrayList<String>();
@@ -107,6 +114,7 @@ public class REPL implements Runnable {
                 }
                 if (currChar == '"') {
                     pState = ParseStates.INQARG;
+                    currArgBuilder.append(currChar);
                 } else if (currChar == ' ') {
                     // end of arg
                     args.add(currArgBuilder.toString());
@@ -122,6 +130,7 @@ public class REPL implements Runnable {
                 if (currChar == '"') {
                     // ignore escaped quotes
                     if (prevChar != '\\') {
+                        currArgBuilder.append(currChar);
                         pState = ParseStates.INARG;
                     } else {
                         currArgBuilder.append(currChar);
@@ -149,18 +158,76 @@ public class REPL implements Runnable {
         return argList;
     }
 
+    public void shutdown() {
+        if (scanner != null) {
+            scanner.shutdown();
+            scanner = null;
+
+            if (myThread != null) {
+                ThreadUtils.fold(myThread, false, ProcessModel.instance().getVerbose());
+            }
+        }
+    }
+
+    Evaluator scanner = new Evaluator();
+
+    Thread myThread;
+
     @Override
     public void run() {
 
-        Scanner sc = new Scanner(System.in);
-        // REPL Loop if necessary
-        while (sc.hasNextLine()) {
+        myThread = Thread.currentThread();
+        while (true) {
 
-            String line = sc.nextLine().trim();
-            if (instance.processArgs(processREPLInput(line)) == 1) {
-                sc.close();
+            try {
+                Object line = scanner.call();
+                System.out.println("line: " + line.toString().trim());
+                if (instance.processArgs(processREPLInput(line.toString())) == 1) {
+                    break;
+                }
+            } catch (Exception e) {
                 break;
             }
+        }
+    }
+
+    public class Evaluator implements Callable<String> {
+
+        private boolean running = true;
+
+        public void shutdown() {
+            running = false;
+        }
+
+        public void start() {
+            running = true;
+        }
+
+        public String call() throws IOException {
+            BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+            String input = null;
+            do {
+                try {
+                    // wait until we have data to complete a readLine()
+                    while (!br.ready() && running) {
+                        Thread.sleep(Constants.IDLE_TIME);
+                        if (!running) {
+                            break;
+                        }
+                    }
+
+                    if (!running) {
+                        break;
+                    }
+
+                    input = br.readLine();
+
+                } catch (InterruptedException e) {
+                    return null;
+                }
+            } while ("".equals(input));
+
+            return input;
         }
     }
 

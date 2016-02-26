@@ -1,0 +1,13 @@
+Using the tool:
+
+
+# Basic Search
+java -jar HubCap.jar angularjs 20
+
+
+# Deep Search
+java -jar HubCap.jar 50 1000  -Dmode=deep -Dquery="jquery in:name"
+
+
+#WATCH
+java -jar HubCap.jar -D

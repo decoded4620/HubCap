@@ -63,7 +63,7 @@ public interface TaskRunnerListener {
      *            execution. The Task may spawn any number of child threads to
      *            parallelize the response data.
      */
-    public void onTaskComplete(TaskRunner runner, Object aggregatedResults);
+    public void onTaskComplete(TaskRunner runner);
 
     /**
      * Invoked when data is received by the task.
@@ -71,7 +71,7 @@ public interface TaskRunnerListener {
      * @param runner
      *            the TaskRunner we're listening to
      */
-    public void onTaskDataReceived(TaskRunner runner, Object taskData);
+    public void onTaskDataReceived(TaskRunner runner);
 
     /**
      * Invoked when there is a task Error.

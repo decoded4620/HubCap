@@ -1,4 +1,4 @@
-package com.hubcap;
+package com.hubcap.task.model;
 
 /*
  * #%L
@@ -26,12 +26,14 @@ package com.hubcap;
  * #L%
  */
 
-public enum ProcessState {
-    DORMANT,
-    STARTUP,
-    REPL,
-    RUNNING,
-    BUSY,
-    SHUTDOWN,
-    ERROR
+public class GitHubUser {
+
+    public String userName;
+
+    public String passwordOrToken;
+
+    public GitHubUser() {
+        // TODO Auto-generated constructor stub
+    }
+
 }
