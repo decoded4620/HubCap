@@ -5,7 +5,7 @@
     <!-- Project Info -->
     <groupId>com.decoded.software</groupId>
     <artifactId>hubcap-project</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>HubCap</name>
     <description>HubCap is a GitHub Repository Analyzer Tool. It can be used either Standalone, or at the command line.</description>
