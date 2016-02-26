@@ -1,5 +1,7 @@
 package com.hubcap.lowlevel;
 
+import java.io.EOFException;
+
 /*
  * #%L
  * HubCap-Core
@@ -36,6 +38,7 @@ import com.google.api.client.http.HttpRequest;
 import com.google.api.client.http.HttpResponse;
 import com.google.api.client.http.HttpTransport;
 import com.google.api.client.util.Base64;
+import com.hubcap.utils.ErrorUtils;
 
 public class HttpClient {
 
@@ -52,23 +55,60 @@ public class HttpClient {
         transport = new HttpTransport();
     }
 
-    private String readResponse(HttpResponse response) throws IOException {
+    public boolean verbose = false;
 
-        StringBuilder b = new StringBuilder();
-        InputStream iStream = response.getContent();
-        int ch;
-        while ((ch = iStream.read()) != -1) {
-            b.append((char) ch);
+    private ParsedHttpResponse readResponse(HttpResponse response) throws IOException {
+
+        ParsedHttpResponse parsedResponse = new ParsedHttpResponse(response);
+        return parsedResponse;
+    }
+
+    public ParsedHttpResponse headAuthorizedRequest(String reqUrl, String un, String pwd, Map<String, String> headers) throws IOException {
+        GenericUrl url = new GenericUrl(reqUrl);
+        HttpRequest request = transport.buildHeadRequest();
+        request.url = url;
+
+        request.headers.setBasicAuthentication(un, pwd);
+
+        if (headers != null) {
+            for (String key : headers.keySet()) {
+                request.headers.set(key, headers.get(key));
+            }
         }
 
-        String r = b.toString();
-
+        HttpResponse response = request.execute();
+        ParsedHttpResponse r = readResponse(response);
         return r;
     }
 
-    public String getAuthorizedRequest(String reqUrl, String un, String pwd, Map<String, String> headers) throws IOException {
+    public ParsedHttpResponse safeHeadAuthorizedRequest(String headUrl, String un, String pwd, Map<String, String> headers) {
+        try {
+            return headAuthorizedRequest(headUrl, un, pwd, headers);
+        } catch (IOException e) {
+            ErrorUtils.printStackTrace(e);
+
+            return null;
+        } catch (Exception e) {
+            ErrorUtils.printStackTrace(e);
+            return null;
+        }
+    }
+
+    public ParsedHttpResponse safeAuthorizedRequest(String reqUrl, String un, String pwd, Map<String, String> headers) {
+        try {
+            return getAuthorizedRequest(reqUrl, un, pwd, headers);
+        } catch (IOException e) {
+            ErrorUtils.printStackTrace(e);
+            return null;
+        }
+    }
+
+    public ParsedHttpResponse getAuthorizedRequest(String reqUrl, String un, String pwd, Map<String, String> headers) throws IOException {
         //
-        System.out.println("Req Url:" + reqUrl + ", " + un + ", " + pwd);
+        if (verbose) {
+            System.out.println("getAuthorizedRequest(" + reqUrl + ", " + un + ", %password hidden%)");
+        }
+
         GenericUrl url = new GenericUrl(reqUrl);
         HttpRequest request = transport.buildGetRequest();
         request.url = url;
@@ -82,7 +122,7 @@ public class HttpClient {
         }
 
         HttpResponse response = request.execute();
-        String r = readResponse(response);
+        ParsedHttpResponse r = readResponse(response);
         return r;
     }
 
@@ -93,41 +133,37 @@ public class HttpClient {
      * @return
      * @throws IOException
      */
-    public String getRequest(String reqUrl, Map<String, String> headers) throws IOException {
+    public ParsedHttpResponse getRequest(String reqUrl, Map<String, String> headers) throws IOException {
 
+        if (verbose) {
+            System.out.println("getRequest(" + reqUrl + ")");
+        }
         GenericUrl url = new GenericUrl(reqUrl);
         HttpRequest request = transport.buildGetRequest();
         request.url = url;
 
         HttpResponse response = request.execute();
-        String r = readResponse(response);
-        System.out.println("url: " + reqUrl + ", response: " + response.statusCode + " - " + r.length() + " characters");
+        ParsedHttpResponse r = readResponse(response);
         return r;
     }
 
-    public String postAuthorizedRequest(String reqUrl, String postData, String un, String pwd, Map<String, String> headers) throws IOException {
-        // String authString = un + ":" + pwd;
-        // System.out.println("auth string: " + authString);
-        // byte[] authEncBytes = Base64.encode(authString.getBytes());
-        // String authStringEnc = new String(authEncBytes);
-        // System.out.println("Base64 encoded auth string: " + authStringEnc);
-        //
+    public ParsedHttpResponse postAuthorizedRequest(String reqUrl, String postData, String un, String pwd, Map<String, String> headers) throws IOException {
         GenericUrl url = new GenericUrl(reqUrl);
         HttpRequest request = transport.buildPostRequest();
         request.url = url;
         request.headers.setBasicAuthentication(un, pwd);
         HttpResponse response = request.execute();
-        String r = readResponse(response);
+        ParsedHttpResponse r = readResponse(response);
         return r;
     }
 
-    public String postRequest(String reqUrl, String postData, Map<String, String> headers) throws IOException {
+    public ParsedHttpResponse postRequest(String reqUrl, String postData, Map<String, String> headers) throws IOException {
         GenericUrl url = new GenericUrl(reqUrl);
         HttpRequest request = transport.buildPostRequest();
         request.url = url;
 
         HttpResponse response = request.execute();
-        String r = readResponse(response);
+        ParsedHttpResponse r = readResponse(response);
         return r;
     }
 }

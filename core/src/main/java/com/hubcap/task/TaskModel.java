@@ -10,6 +10,7 @@ import java.util.function.BiFunction;
 
 import org.apache.commons.cli.CommandLine;
 
+import com.hubcap.task.model.BaseModel;
 import com.hubcap.task.state.TaskMode;
 
 /*
@@ -38,11 +39,7 @@ import com.hubcap.task.state.TaskMode;
  * #L%
  */
 
-public class TaskModel {
-
-    private List<Object> aggregateData = Collections.synchronizedList(new ArrayList<Object>());
-
-    private Map<String, Object> aggregateDataMap;
+public class TaskModel extends BaseModel {
 
     private TaskMode taskMode = TaskMode.NONE;
 
@@ -52,14 +49,16 @@ public class TaskModel {
 
     private String userPassOrToken = null;
 
-    private long maxResults = -1;
-
+    /**
+     * CTOR
+     * 
+     * @param username
+     * @param passwordOrToken
+     */
     public TaskModel(String username, String passwordOrToken) {
-
+        super();
         this.userPassOrToken = passwordOrToken;
         this.userName = username;
-        // this insures we can set
-        aggregateDataMap = Collections.synchronizedMap(new HashMap<String, Object>());
     }
 
     public String getUserName() {
@@ -68,14 +67,6 @@ public class TaskModel {
 
     public String getPasswordOrToken() {
         return this.userPassOrToken;
-    }
-
-    public void setMaxResults(long value) {
-        this.maxResults = value;
-    }
-
-    public long getMaxResults() {
-        return maxResults;
     }
 
     public void setTaskMode(TaskMode mode) {
@@ -92,29 +83,5 @@ public class TaskModel {
 
     public CommandLine getCommandLine() {
         return this.cli;
-    }
-
-    public void aggregate(Object moreData) {
-        synchronized (aggregateData) {
-            if (aggregateData.contains(moreData) == false) {
-                aggregateData.add(moreData);
-            }
-        }
-    }
-
-    public void aggregateForKey(String key, Object moreData) {
-        synchronized (aggregateDataMap) {
-            if (aggregateDataMap.containsKey(key) == false) {
-                aggregateDataMap.put(key, moreData);
-            }
-        }
-    }
-
-    public List<Object> getAggregateData() {
-        return Collections.unmodifiableList(aggregateData);
-    }
-
-    public Map<String, Object> getAggregateDataMap() {
-        return Collections.unmodifiableMap(aggregateDataMap);
     }
 }

@@ -1,23 +1,36 @@
 package com.hubcap.task.helpers;
 
 import java.io.IOException;
-import java.io.PrintWriter;
+import java.lang.Thread.State;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.ConcurrentModificationException;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.cli.CommandLine;
 
 import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
+import com.hubcap.Constants;
 import com.hubcap.lowlevel.HttpClient;
+import com.hubcap.lowlevel.ParsedHttpResponse;
 import com.hubcap.process.ProcessModel;
 import com.hubcap.task.TaskRunner;
-import com.hubcap.task.model.GitHubLimitsByResource;
-import com.hubcap.task.model.GitHubPull;
+import com.hubcap.task.helpers.drones.AggregatorDrone;
+import com.hubcap.task.model.AggregatorModel;
 import com.hubcap.task.model.GitHubRateLimit;
 import com.hubcap.task.model.GitHubRepo;
 import com.hubcap.utils.ErrorUtils;
+import com.hubcap.utils.ThreadUtils;
 
 /*
  * #%L
@@ -46,6 +59,10 @@ import com.hubcap.utils.ErrorUtils;
  */
 
 public class DefaultSearchHelper extends TaskRunnerHelper {
+
+    private AtomicLong searchHelperId = new AtomicLong(0);
+
+    private List<Thread> droneThreads = Collections.synchronizedList(new ArrayList<Thread>());
 
     /**
      * CTOR
@@ -90,106 +107,101 @@ public class DefaultSearchHelper extends TaskRunnerHelper {
                 String un = taskModel.getUserName();
                 String pwd = taskModel.getPasswordOrToken();
                 try {
-                    String data = client.getAuthorizedRequest(rlUrl, un, pwd, null);
+                    ParsedHttpResponse data = client.getAuthorizedRequest(rlUrl, un, pwd, null);
                     Gson gson = new Gson();
-                    GitHubRateLimit rateLimit = gson.fromJson(data, GitHubRateLimit.class);
+                    GitHubRateLimit rateLimit = gson.fromJson(data.getContent(), GitHubRateLimit.class);
 
                     ProcessModel.instance().setRateLimitData(rateLimit);
                 } catch (IOException ex) {
                     ErrorUtils.printStackTrace(ex);
                 }
             }
+
             for (int i = 0; i < cLen; i += 2) {
 
-                String since = null;
                 String orgName = cmd.getArgs()[i];
-                int count = Integer.parseInt(cmd.getArgs()[i + 1]);
+                int count = 10;
 
-                int maxResults = opts.containsKey("maxResults") ? Integer.parseInt((String) opts.get("maxResults")) : 1000;
-                int totalResults = 0;
+                try {
+                    count = Integer.parseInt(cmd.getArgs()[i + 1]);
+                } catch (NumberFormatException ex) {
+                    ErrorUtils.printStackTrace(ex);
+                }
 
-                if (ProcessModel.instance().getRateLimitData().rate.remaining > maxResults * 2) {
+                final long remainingRate = ProcessModel.instance().getRateLimitData().rate.remaining;
+                final long maxResults = opts.containsKey("maxResults") ? Integer.parseInt((String) opts.get("maxResults")) : (remainingRate - 1);
+                int maxPages = 100;
+                if (remainingRate >= maxResults) {
+
                     // pound that API until we get what we want!!
-                    while (totalResults < maxResults) {
-                        try {
 
-                            String url = "https://api.github.com/orgs/" + orgName + "/repos";
-                            String un = taskModel.getUserName();
-                            String pwd = taskModel.getPasswordOrToken();
-                            if (since != null) {
-                                url += "?since=" + since;
-                            }
+                    // breaks out of the loop after
+                    // max pages
+                    searchHelperId.incrementAndGet();
 
-                            Map<String, String> headers = new HashMap<String, String>();
-                            String data = client.getAuthorizedRequest(url, un, pwd, headers);
-
-                            if (data != null) {
-
-                                Gson gson = new Gson();
-
-                                // replace the known bad var names we couldn't
-                                // serialized from
-                                // in java. Silly naming conventions :)
-                                data.replace("\"private\":", "\"isPrivate\":");
-
-                                PrintWriter writer = new PrintWriter("resources/results.json", "UTF-8");
-                                writer.println(data);
-                                writer.close();
-
-                                // create a list of GitHub repos
-                                List<GitHubRepo> reposForOrg = gson.fromJson(data, new TypeToken<List<GitHubRepo>>() {
-                                }.getType());
-                                totalResults += reposForOrg.size();
-
-                                // no more results?
-                                if (reposForOrg.size() == 0 || reposForOrg.size() < 30) {
-                                    break;
-                                }
-
-                                // aggregate the data within the task model
-                                taskModel.setMaxResults(count);
-                                taskModel.aggregate(reposForOrg);
-
-                                String newSince = String.valueOf(reposForOrg.get(reposForOrg.size() - 1).id);
-
-                                if (newSince.equals(since)) {
-
-                                    break;
-                                }
-
-                                since = newSince;
-                                if (this.listener != null) {
-                                    this.listener.processTaskHelperData(reposForOrg);
-                                }
-
-                                System.out.println("Found: " + reposForOrg.size() + " repositories using: " + url + " total results: " + totalResults + ", since is now: "
-                                        + since);
-
-                                String state = null;
-
-                                for (GitHubRepo repo : reposForOrg) {
-
-                                    String pUrl = repo.pulls_url.replace("{/number}", "");
-                                    // get the pulls
-                                    String pulls = client.getAuthorizedRequest(pUrl, un, pwd, null);
-                                    List<GitHubPull> pullObjects = gson.fromJson(pulls, new TypeToken<List<GitHubPull>>() {
-                                    }.getType());
-                                    repo.pulls = pullObjects;
-
-                                    System.out.println("Repo: " + repo.id + ": " + repo.name + " " + repo.url);
-                                }
-                                if (totalResults >= maxResults) {
-                                    break;
-                                }
-                            }
-                        } catch (IOException ex) {
-                            if (ProcessModel.instance().getVerbose())
-                                ErrorUtils.printStackTrace(ex);
-                        }
+                    if (searchHelperId.get() > maxPages) {
+                        break;
                     }
+
+                    try {
+                        synchronized (droneThreads) {
+                            Thread t = new Thread(new AggregatorDrone(this.taskModel, orgName, count));
+                            droneThreads.add(t);
+
+                            t.setName("drone" + String.valueOf(owner.getTaskId()) + "-" + String.valueOf(new Date().getTime()));
+                            t.setDaemon(false);
+                            t.start();
+                        }
+                    } catch (RejectedExecutionException ex) {
+                        ErrorUtils.printStackTrace(ex);
+                        break;
+                    }
+
                 } else {
                     System.err.println("Your rate limit is exhausted, try again later!");
                 }
+            }
+
+            while (droneThreads.size() > 0) {
+                Iterator<Thread> it = droneThreads.iterator();
+                while (it.hasNext()) {
+                    Thread currDroneThread = it.next();
+
+                    if (currDroneThread.getState() == State.TERMINATED) {
+                        it.remove();
+                    }
+                }
+
+                // sleep and do it again
+                if (!ThreadUtils.safeSleep(Constants.IDLE_TIME, false)) {
+                    break;
+                }
+            }
+        }
+
+        // wait a tad
+
+        synchronized (taskModel) {
+            Map<String, Object> aggData = taskModel.getAggregateDataMap();
+
+            if (aggData != null) {
+
+                for (String key : aggData.keySet()) {
+
+                    Object value = aggData.get(key);
+
+                    if (value instanceof AggregatorModel == false) {
+                        continue;
+                    }
+
+                    // ask the model to calculate from its current state
+                    AggregatorModel model = (AggregatorModel) value;
+                    synchronized (model) {
+                        model.calculate();
+                    }
+                }
+
+                listener.processTaskHelperData(taskModel);
             }
         }
         die();

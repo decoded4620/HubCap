@@ -74,16 +74,16 @@ public class TaskRunner implements Runnable {
 
     // at most 10 percent of CPU when basic search is being done.
     // task runner Thread metrics
-    public static final float CPU_LOAD_TR = 0.10f;
+    public static final float CPU_LOAD_TR = 0.05f;
 
-    public static final float CPU_WAIT_TR = 5f;
+    public static final float CPU_WAIT_TR = 2f;
 
     public static final float CPU_COMPUTE_TR = 1f;
 
     // task runner helper Thread metrics
     public static final float CPU_LOAD_TRH = 0.05f;
 
-    public static final float CPU_WAIT_TRH = 20f;
+    public static final float CPU_WAIT_TRH = 10f;
 
     public static final float CPU_COMPUTE_TRH = 1f;
 
@@ -463,7 +463,7 @@ public class TaskRunner implements Runnable {
                 // systems that are so 'badass' that we would break the cap. \
                 // (i.e. i have 32 cores and 12 disks = (2*32*12*1(1+5/1) =
                 // 4600 threads, a bit high)...)
-                int numThreads = ThreadUtils.getStableThreadCount(CPU_LOAD_TR, CPU_WAIT_TR, CPU_COMPUTE_TR, Constants.MAX_THREADS);
+                int numThreads = ThreadUtils.getStableThreadCount(CPU_LOAD_TR, CPU_WAIT_TR, CPU_COMPUTE_TR, Constants.MAX_TASK_RUNNER_THREADS);
 
                 System.out.println("creating: " + numThreads + " threads for hubcap");
                 TaskRunner.threadPool = Executors.newFixedThreadPool(numThreads, TaskRunner.factory);
@@ -523,7 +523,7 @@ public class TaskRunner implements Runnable {
     public static void rebalance() {
 
         // spy on any unrecoverable tasks.
-        if (unrecoverableErrorTasks.size() >= Constants.MIN_UNRECOVERABLE_POOL_SIZE && TaskRunner.activeTaskCount() <= Math.floor(Constants.MAX_THREADS / 10)) {
+        if (unrecoverableErrorTasks.size() >= Constants.MIN_UNRECOVERABLE_POOL_SIZE && TaskRunner.activeTaskCount() <= Math.floor(Constants.MAX_TASK_RUNNER_THREADS / 10)) {
 
             if (pruningThread == null) {
                 pruningThread = new Thread(new Runnable() {
@@ -543,7 +543,7 @@ public class TaskRunner implements Runnable {
             }
         }
 
-        if (busyMuncherThread == null) {
+        if (busyMuncherThread == null && busyArgs.size() > 0) {
             busyMuncherThread = new Thread(new Runnable() {
 
                 @Override
@@ -803,29 +803,6 @@ public class TaskRunner implements Runnable {
             }
         } else {
             System.err.println("cannot processIdle if state is not IDLE.");
-        }
-    }
-
-    /**
-     * Aggregates data on a list.
-     * 
-     * @param moreData
-     */
-    protected void aggregateData(Object moreData) {
-        if (this.taskState == TaskRunnerState.ACTIVE) {
-            taskModel.aggregate(moreData);
-        }
-    }
-
-    /**
-     * Aggregates data for a specified key
-     * 
-     * @param key
-     * @param moreData
-     */
-    protected void aggregateDataForKey(String key, Object moreData) {
-        if (this.taskState == TaskRunnerState.ACTIVE) {
-            taskModel.aggregateForKey(key, moreData);
         }
     }
 

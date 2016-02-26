@@ -144,9 +144,7 @@ public class HubCapTest {
             HubCap hub = HubCap.instance();
             // start a crap ton of threads
 
-            for (int i = 0; i < Constants.MAX_THREADS; i++) {
-                hub.processArgs(REPL.processREPLInput(i + " --debug"), listener);
-            }
+            hub.processArgs(REPL.processREPLInput("jquery 4 angular 6 collectiveidea 3"), listener);
 
             // wait indefinitely until active task count is 0
             ThreadUtils.waitUntil(new ExpressionEval() {
@@ -191,9 +189,9 @@ public class HubCapTest {
             DebugSearchHelper.debug_errorChance = 0.025;
             for (int j = 0; j < multiplier; ++j) {
 
-                for (int i = 0; i < Constants.MAX_THREADS; i++) {
-                    hub.processArgs(REPL.processREPLInput(j + "-" + i + " --debug"), listener);
-                }
+                hub.processArgs(REPL.processREPLInput("errfree 10 engineyard 10 ministrycentered 10 jquery 10 angular 10"), listener);
+                hub.processArgs(REPL.processREPLInput("sevenwire 10 wrenchlabs 10 railslove 10 netguru 10 NanoHttpd 10 trabian 10 UntoThisLast 10"), listener);
+                hub.processArgs(REPL.processREPLInput("orgsync 10 wesabe 10 standout 10 galaxycats 10 edgecase 10 notch8 10 lincolnloop 10"), listener);
 
                 if (!ThreadUtils.safeSleep(Constants.MINI_TIME, ProcessModel.instance().getVerbose())) {
                     break;
@@ -231,48 +229,6 @@ public class HubCapTest {
         } catch (Exception e) {
             ErrorUtils.printStackTrace(e);
         }
-    }
-
-    @Test
-    public void test3() {
-
-        System.out.println("TEST REPL");
-        System.out.println("--------------------------------------------------");
-        HubCap hub = HubCap.instance();
-
-        hub.shutdownREPL();
-        String[] args = new String[2];
-        args[0] = "whatever";
-        args[1] = "-Drepl=true";
-        hub.processArgs(args);
-
-        // wait for at most X milliseconds for active task count to be > 0
-        ThreadUtils.waitUntil(new ExpressionEval() {
-
-            @Override
-            public Object evaluate() {
-                return TaskRunner.activeTaskCount() > 0;
-            }
-        }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
-
-        ThreadUtils.safeSleep(500, true);
-
-        // wait for at most X milliseconds for active task count to be 0
-        ThreadUtils.waitUntil(new ExpressionEval() {
-
-            @Override
-            public Object evaluate() {
-
-                System.out.println("waiting for: " + TaskRunner.waitingTaskCount());
-                return TaskRunner.waitingTaskCount() == 0;
-            }
-        }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
-
-        // sleep until tasks are done
-        // insure our repl command worked
-        Assert.assertTrue(hub.isREPL());
-
-        System.out.println("pass!");
     }
 
     @AfterClass

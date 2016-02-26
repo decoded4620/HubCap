@@ -1,9 +1,4 @@
-package com.hubcap.task.helpers;
-
-import java.util.Properties;
-
-import com.hubcap.task.TaskModel;
-import com.hubcap.task.TaskRunner;
+package com.hubcap.task.model;
 
 /*
  * #%L
@@ -31,46 +26,15 @@ import com.hubcap.task.TaskRunner;
  * #L%
  */
 
-public class TaskRunnerHelper implements Runnable {
+public class GitHubPullData {
 
-    // object to handle events from this search helper
-    protected SearchHelperListener listener;
-
-    // the task model
-    protected TaskModel taskModel;
-
-    protected Properties opts;
-
-    // the task runner which owns this task helper
-    protected TaskRunner owner;
-
-    public TaskRunnerHelper(TaskRunner owner) {
-
-        this.owner = owner;
-        this.taskModel = this.owner.getTaskModel();
-
-        opts = taskModel.getCommandLine().getOptionProperties("D");
+    /**
+     * This is associated with a GitHubPull instance. the GitHubPull instance
+     * reveals top level data about a pull for a specified Repo, whereas this
+     * Object contains the verbose details of the pull
+     */
+    public GitHubPullData() {
         // TODO Auto-generated constructor stub
-    }
-
-    public void setListener(SearchHelperListener listener) {
-        this.listener = listener;
-    }
-
-    @Override
-    public void run() {
-        // TODO Auto-generated method stub
-
-    }
-
-    public void die() {
-        System.out.println("die()");
-        this.listener = null;
-        this.owner = null;
-        this.taskModel = null;
-
-        // clear the memories.
-        System.gc();
     }
 
 }

@@ -83,11 +83,12 @@ public class CLIOptionBuilder {
 
         availableOptions.addOption("h", "help", false, helpContent);
         availableOptions.addOption("v", "verbose", false, "Be verbose");
+
         availableOptions.addOption("r", "no-repl", false, "DONT fallback to repl mode");
         availableOptions.addOption("s", "shutdown-after", false, "Shutdown after results are complete");
         availableOptions.addOption("m", "mode", true, "Set the task mode, valid settings are 'search', 'deepsearch', 'watch', 'debug', default is 'search'");
         availableOptions.addOption("q", "query", true, "Query");
-        availableOptions.addOption("q", "queryOption", true, "Query Option");
+        availableOptions.addOption("o", "queryOption", true, "Query Option");
 
         Option property = Option.builder("D").hasArgs().valueSeparator('=').build();
         availableOptions.addOption(property);

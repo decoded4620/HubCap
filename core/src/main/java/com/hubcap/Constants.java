@@ -43,7 +43,7 @@ public class Constants {
      * this tool is open. Changing this to a larger number will likely affect
      * performance when running multiple Scavenge mode jos.
      */
-    public static final int MAX_THREADS = 64;
+    public static final int MAX_TASK_RUNNER_THREADS = 32;
 
     /**
      * The maximum number of concurrent helper threads that can run within a
@@ -52,13 +52,18 @@ public class Constants {
     public static final int MAX_HELPER_THREADS = 12;
 
     /**
+     * Aggregating is a funny business. give it some room
+     */
+    public static final int MAX_AGGREGATOR_THREADS = 256;
+
+    /**
      * The number of milliseconds that a task runner can run without producing
      * results prior to abandoning its own task. Task Runners are self
      * monitoring so they know how long they've been running, etc.
      */
     public static final int CMD_TIMEOUT_MS = 5000;
 
-    public static final int TASK_RUN_STOP_WAIT_TIME_MS = 100;
+    public static final int TASK_RUN_STOP_WAIT_TIME_MS = 500;
 
     /**
      * The number of milliseconds that HubCap will sleep if there are no free
@@ -84,7 +89,7 @@ public class Constants {
      * Once BUSY state is set, this many threads must complete before a not-busy
      * state will be restored.
      */
-    public static final int MIN_NOT_BUSY_THREAD_COUNT = (int) Math.ceil(MAX_THREADS * .25);
+    public static final int MIN_NOT_BUSY_THREAD_COUNT = (int) Math.ceil(MAX_TASK_RUNNER_THREADS * .25);
 
     /**
      * Allows the thread to sleep most of the time during 'idle', but respond
@@ -95,13 +100,13 @@ public class Constants {
     public static final int MINI_TIME = 10;
 
     // if we start hitting
-    public static final int PRUNE_BOUNDS_LOW = (int) Math.floor(MAX_THREADS * .05);
+    public static final int PRUNE_BOUNDS_LOW = (int) Math.floor(MAX_TASK_RUNNER_THREADS * .05);
 
-    public static final int PRUNE_BOUNDS_HIGH = (int) Math.ceil(MAX_THREADS * .75);
+    public static final int PRUNE_BOUNDS_HIGH = (int) Math.ceil(MAX_TASK_RUNNER_THREADS * .75);
 
     // at least 10% of all threads must be unrecoverable before we start the
     // pruner.
-    public static final int MIN_UNRECOVERABLE_POOL_SIZE = (int) Math.floor(MAX_THREADS * .025);
+    public static final int MIN_UNRECOVERABLE_POOL_SIZE = (int) Math.max(1, Math.floor(MAX_TASK_RUNNER_THREADS * .025));
 
     // Exit synonyms
     public static final String CMD_EXIT = "exit";

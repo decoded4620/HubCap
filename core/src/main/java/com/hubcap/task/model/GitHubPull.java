@@ -40,6 +40,8 @@ public class GitHubPull {
 
     public String title;
 
+    public GitHubPullData pullData;
+
     public GitHubRemoteUser user;
 
     public GitHubPull() {

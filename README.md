@@ -43,39 +43,48 @@ I've included a default travis yml for sport.
 Using the Jar from a Linux or Windows Console.
 
 ##### Authenticate First!
+Setup session long username and password/token for using this tool.
+
+`java -jar hubcap.jar auth yourUserName yourPassOrToken`
+
+You can also add a file to 'resources' called local.json. The content looks like this:
+
+`{ "userName":"yourUserName", "passwordOrToken":"yourPasswordOrToken"}`
+
+HubCap will read this file if available and set the session authentication that way.
+You can use a token (rather than a password) if you so choose by visiting: `https://github.com/settings/tokens/new`
+
+
+##### REPL Mode
+
+Read-Evaluate-Print-Loop, where 'Evaluate' means to take input from the user, and parse the input as new arguments. Each time new arguments are entered a new Search Job is created.
+By default, HubCap will fall back into REPL mode, using non-blocking i.o on System.in(). After each Search Job completes. The user can then type parameters at the Command line, and hit Enter, causing the parameters to be evaluated 'on-the-fly'. Should the Search Job take some time, they can run additional queries in the mean time. Search Jobs are all run in parallel, and aggregated in parallel.
+
+You can simply start with no commands and you'll be in REPL by default.
+
+
+`java -jar hubcap.jar`
 
 
 ##### Default Search Mode
 
 `java -jar hubcap.jar "myOrg" 10`
-##### REPL Mode
 
-Read-Evaluate-Print-Loop, where 'Evaluate' means to take input from the user, and parse the input as new arguments.
+This will search for the top 10 repositories from 'myOrg' organization. This will crawl every repository for this organization, find all of the pull requests,
+and aggregate the complex Pull Information for each.
 
-`java -jar hubcap.jar`
+You can also run parallel searches like this:
 
-Running will no parameters will put the process into REPL mode, using non-blocking i.o on System.in(). The user can then type parameters at the Command line, and hit Enter, causing the parameters to be evaluated 'on-the-fly'. Should the query take some time, they can run additional queries in the mean time.
+`java -jar hubcap.jar org1 10 org2 20 org3 30 ...`
+
+Each pair of arguments represents a new parallel query. Results are aggregated as each job returns data.
+
 
 ##### NO-REPL (One-Off mode)
 
 `java -jar hubcap.jar myOrg 10 --no-repl`
 
-This will execute the program against the organization `myOrg` and list the top `10` repositories sorted by default a default criterion, and then exit. The organization itself is also given a score (for this current session) based on the repositories pulled back from the search.
+This will execute the program against the organization `myOrg` and list the top `10` repositories sorted by default a default criterion, and then exit.
 
 Normally, without this option, HubCap will fall back to `REPL` mode, allowing the user to continue to enter more searches.
-
-
-
-##### DEEP SEARCH MODE
-
-`java -jar hubcap.jar 50 1000 --query=jquery --query-option=in:name`
-
-This will execute the program and query github for the list of the top 50 repositories having 'jquery' in the name, searching a maximum of 1000 repositories on GitHub. If there are less than 50 repositories, all of them are returned, sorted by the default criterion. Note: searchDepths over 1000 must be run in sequential searches, and will take significantly longer. This is the Rate Limit of GitHub.
-
-
-##### WATCH MODE
-
-`java -jar hubcap.jar -Dorg=myOrg -DmaxResults=10 -Dinterval=20000 -Dwatch=true`
-
-This will execute the program against the organization `myOrg` and list the top `10` repositories sorted by default a default criterion, and then continue to 'watch' this query(i.e. re-running it and updating the local results every 20000  milliseconds). Organization scores are also updated.
 
