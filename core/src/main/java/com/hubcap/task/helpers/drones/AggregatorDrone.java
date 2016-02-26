@@ -134,6 +134,10 @@ public class AggregatorDrone implements Runnable {
                 Gson gson = new Gson();
 
                 ParsedHttpResponse r = client.safeAuthorizedRequest(currPageLink, un, pwd, null);
+
+                if (r == null) {
+                    break;
+                }
                 data = r.getContent();
                 // replace the known bad var names we couldn't
                 // serialized from
@@ -182,11 +186,13 @@ public class AggregatorDrone implements Runnable {
             // do it in parallel.
             for (GitHubRepo repo : aggregates) {
 
-                Thread t = new Thread(new PullAggregator(repo, un, pwd));
-                t.setDaemon(false);
-                t.setName("PullAggregator::" + orgName + "::" + repo.name);
-                t.run();
-                runners.add(t);
+                if (repo.isPrivate == false) {
+                    Thread t = new Thread(new PullAggregator(repo, un, pwd));
+                    t.setDaemon(false);
+                    t.setName("PullAggregator::" + orgName + "::" + repo.name);
+                    t.run();
+                    runners.add(t);
+                }
                 // TODO - remove helps with rate limit
                 // break;
             }
@@ -249,6 +255,11 @@ public class AggregatorDrone implements Runnable {
                 String pullUrl = pUrl + "/" + String.valueOf(pull.number);
 
                 ParsedHttpResponse pullDataResponse = client.safeAuthorizedRequest(pullUrl, un, pwd, null);
+
+                if (pullDataResponse == null) {
+                    continue;
+                }
+
                 String pullData = pullDataResponse.getContent();
                 Gson gson = new Gson();
                 if (pullData != null) {
@@ -286,11 +297,16 @@ public class AggregatorDrone implements Runnable {
             // Lazy Mans Template expansion :P. Hey its (going on) 4 day project
             String pUrl = repo.pulls_url.replace("{/number}", "");
 
+            // get the current page
+            ParsedHttpResponse pullsResponse = client.safeAuthorizedRequest(pUrl, un, pwd, null);
+
+            if (pullsResponse == null) {
+                return;
+            }
+
             // starts at first page here (clever right?)
             Gson gson = new Gson();
 
-            // get the current page
-            ParsedHttpResponse pullsResponse = client.safeAuthorizedRequest(pUrl, un, pwd, null);
             String pulls = pullsResponse.getContent();
             List<GitHubPull> pullObjects = gson.fromJson(pulls, new TypeToken<List<GitHubPull>>() {
             }.getType());
@@ -299,6 +315,10 @@ public class AggregatorDrone implements Runnable {
             List<Thread> pullDrones = new ArrayList<Thread>();
             PullAggregatorDrone pullDrone = new PullAggregatorDrone();
             for (GitHubPull pull : pullObjects) {
+
+                if (pull.locked) {
+                    continue;
+                }
 
                 pullDrone.pUrl = pUrl;
                 pullDrone.addPull(pull, un, pwd);

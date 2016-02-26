@@ -85,11 +85,14 @@ public class HttpClient {
         try {
             return headAuthorizedRequest(headUrl, un, pwd, headers);
         } catch (IOException e) {
-            ErrorUtils.printStackTrace(e);
-
+            if (verbose) {
+                ErrorUtils.printStackTrace(e);
+            }
             return null;
         } catch (Exception e) {
-            ErrorUtils.printStackTrace(e);
+            if (verbose) {
+                ErrorUtils.printStackTrace(e);
+            }
             return null;
         }
     }
@@ -98,7 +101,10 @@ public class HttpClient {
         try {
             return getAuthorizedRequest(reqUrl, un, pwd, headers);
         } catch (IOException e) {
-            ErrorUtils.printStackTrace(e);
+
+            if (verbose) {
+                ErrorUtils.printStackTrace(e);
+            }
             return null;
         }
     }
