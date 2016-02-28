@@ -1,7 +1,5 @@
 package com.hubcap;
 
-import java.util.Date;
-
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -36,6 +34,7 @@ import org.junit.Test;
 
 import com.hubcap.lowlevel.ExpressionEval;
 import com.hubcap.process.ProcessModel;
+import com.hubcap.task.REPL;
 import com.hubcap.task.TaskRunner;
 import com.hubcap.task.TaskRunnerListener;
 import com.hubcap.task.helpers.DebugSearchHelper;
@@ -44,8 +43,6 @@ import com.hubcap.utils.ErrorUtils;
 import com.hubcap.utils.ThreadUtils;
 
 public class HubCapTest {
-
-    private static TaskRunnerListener listener = null;
 
     @BeforeClass
     public static void setup() {
@@ -58,39 +55,9 @@ public class HubCapTest {
             ThreadUtils.safeSleep(1000, ProcessModel.instance().getVerbose());
         }
 
-        listener = new TaskRunnerListener() {
-
-            @Override
-            public void onTaskStateChange(TaskRunner runner, TaskRunnerState state) {
-                // TODO Auto-generated method stub
-
-            }
-
-            @Override
-            public void onTaskStart(TaskRunner runner) {
-            }
-
-            @Override
-            public void onTaskError(TaskRunner runner, Exception e, boolean canRecoverFromError) {
-                // TODO Auto-generated method stub
-                // System.err.println("onTaskError(" + runner.getTaskId() + ", "
-                // + e.toString() + ", can recover? " + canRecoverFromError);
-            }
-
-            @Override
-            public void onTaskDataReceived(TaskRunner runner) {
-                // TODO Auto-generated method stub
-
-            }
-
-            @Override
-            public void onTaskComplete(TaskRunner runner) {
-                // TODO Auto-generated method stub
-            }
-        };
-
+        // create HubCap
         HubCap.instance();
-        Assert.assertEquals(true, true);
+        HubCap.instance().processArgs(REPL.processREPLInput("auth decoded4620 129bf1a604dd4c46ce235b8d9d6e1ac261e50c1e"));
     }
 
     @Test
@@ -98,8 +65,8 @@ public class HubCapTest {
         System.out.println("TEST DEFAULT");
         System.out.println("--------------------------------------------------");
         String[] args = {
-            "decoded4620",
-            "10"
+            "edgecase",
+            "3"
         };
 
         boolean caught = false;
@@ -110,7 +77,7 @@ public class HubCapTest {
         }
 
         // wait indefinitely until active task count is 0
-        ThreadUtils.waitUntil(new ExpressionEval() {
+        ThreadUtils.napUntil(new ExpressionEval() {
 
             @Override
             public Object evaluate() {
@@ -121,7 +88,7 @@ public class HubCapTest {
         Assert.assertEquals(caught, false);
 
         // wait indefinitely until active task count is 0
-        ThreadUtils.waitUntil(new ExpressionEval() {
+        ThreadUtils.napUntil(new ExpressionEval() {
 
             @Override
             public Object evaluate() {
@@ -135,19 +102,69 @@ public class HubCapTest {
         System.out.println("pass!");
     }
 
+    class TestListener implements TaskRunnerListener {
+
+        boolean stch = false;
+
+        boolean st = false;
+
+        boolean err = false;
+
+        boolean dr = false;
+
+        boolean cmp = false;
+
+        boolean c = false;
+
+        @Override
+        public void onTaskStateChange(TaskRunner runner, TaskRunnerState state) {
+            stch = true;
+        }
+
+        @Override
+        public void onTaskStart(TaskRunner runner) {
+            st = true;
+        }
+
+        @Override
+        public void onTaskError(TaskRunner runner, Exception e, boolean canRecoverFromError) {
+            err = false;
+        }
+
+        @Override
+        public void onTaskDataReceived(TaskRunner runner) {
+            dr = true;
+        }
+
+        @Override
+        public void onTaskComplete(TaskRunner runner) {
+            cmp = true;
+        }
+
+        public void checkLifecylce() {
+            Assert.assertTrue(stch);
+            Assert.assertTrue(st);
+            Assert.assertTrue(dr);
+            Assert.assertTrue(cmp);
+            Assert.assertFalse(err);
+        }
+    }
+
     @Test
     public void test1() {
 
         try {
-            System.out.println("TEST MANY");
+            System.out.println("TEST MULTIPLE");
             System.out.println("--------------------------------------------------");
             HubCap hub = HubCap.instance();
             // start a crap ton of threads
 
-            hub.processArgs(REPL.processREPLInput("jquery 4 angular 6 collectiveidea 3"), listener);
+            TestListener testListener = new TestListener();
 
+            hub.processArgs(REPL.processREPLInput("edgecase 4"), testListener);
+            hub.processArgs(REPL.processREPLInput("railslove 4"), testListener);
             // wait indefinitely until active task count is 0
-            ThreadUtils.waitUntil(new ExpressionEval() {
+            ThreadUtils.napUntil(new ExpressionEval() {
 
                 @Override
                 public Object evaluate() {
@@ -156,7 +173,7 @@ public class HubCapTest {
             }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
 
             // wait indefinitely until active task count is 0
-            ThreadUtils.waitUntil(new ExpressionEval() {
+            ThreadUtils.napUntil(new ExpressionEval() {
 
                 @Override
                 public Object evaluate() {
@@ -166,6 +183,8 @@ public class HubCapTest {
                     return TaskRunner.waitingTaskCount() == 0;
                 }
             }, -1, Constants.TASK_RUN_STOP_WAIT_TIME_MS, ProcessModel.instance().getVerbose());
+
+            testListener.checkLifecylce();
 
             System.out.println("pass!");
 
@@ -183,41 +202,35 @@ public class HubCapTest {
             HubCap hub = HubCap.instance();
             // start a crap ton of threads
 
-            int multiplier = 5;
-
             DebugSearchHelper.debugWorkTime = Constants.FAKE_WORK_TIME_HEAVY;
             DebugSearchHelper.debug_errorChance = 0.025;
-            for (int j = 0; j < multiplier; ++j) {
 
-                hub.processArgs(REPL.processREPLInput("errfree 10 engineyard 10 ministrycentered 10 jquery 10 angular 10"), listener);
-                hub.processArgs(REPL.processREPLInput("sevenwire 10 wrenchlabs 10 railslove 10 netguru 10 NanoHttpd 10 trabian 10 UntoThisLast 10"), listener);
-                hub.processArgs(REPL.processREPLInput("orgsync 10 wesabe 10 standout 10 galaxycats 10 edgecase 10 notch8 10 lincolnloop 10"), listener);
-
-                if (!ThreadUtils.safeSleep(Constants.MINI_TIME, ProcessModel.instance().getVerbose())) {
-                    break;
-                }
-
-                if (!ThreadUtils.safeSleep(Constants.MINI_TIME, ProcessModel.instance().getVerbose())) {
-                    break;
-                }
-            }
+            // run several one offs
+            hub.processArgs(REPL.processREPLInput("errfree 10"));
+            hub.processArgs(REPL.processREPLInput("engineyard 10"));
+            hub.processArgs(REPL.processREPLInput("ministrycentered 10"));
+            hub.processArgs(REPL.processREPLInput("jquery 10"));
+            hub.processArgs(REPL.processREPLInput("angular 10"));
+            hub.processArgs(REPL.processREPLInput("sevenwire 10 wrenchlabs 10 railslove 10"));
+            hub.processArgs(REPL.processREPLInput("netguru 10 NanoHttpd 10 trabian 10 UntoThisLast 10"));
+            hub.processArgs(REPL.processREPLInput("orgsync 10 wesabe 10 standout 10 galaxycats 10 edgecase 10 notch8 10 lincolnloop 10"));
 
             // wait for at most X milliseconds for active task count to be more
             // than 0
-            ThreadUtils.waitUntil(new ExpressionEval() {
+            ThreadUtils.napUntil(new ExpressionEval() {
 
                 @Override
                 public Object evaluate() {
                     return TaskRunner.activeTaskCount() > 0;
                 }
-            }, Constants.NEW_THREAD_SPAWN_BREATHING_TIME, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
+            }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
 
-            // wait indefinitely until active task count is 0
-            ThreadUtils.waitUntil(new ExpressionEval() {
+            // sleep loop indefinitely until active task count is 0
+            ThreadUtils.napUntil(new ExpressionEval() {
 
                 @Override
                 public Object evaluate() {
-                    if (TaskRunner.waitingTaskCount() < 100) {
+                    if (TaskRunner.waitingTaskCount() < Math.ceil(Constants.MAX_TASK_RUNNER_THREADS / 2)) {
                         System.out.println("waiting for: " + TaskRunner.waitingTaskCount());
                     }
                     return TaskRunner.waitingTaskCount() == 0;
@@ -244,16 +257,16 @@ public class HubCapTest {
         hub.processArgs(REPL.processREPLInput("exit"));
 
         // wait for at most X milliseconds for active task count to be > 0
-        ThreadUtils.waitUntil(new ExpressionEval() {
+        ThreadUtils.napUntil(new ExpressionEval() {
 
             @Override
             public Object evaluate() {
                 return TaskRunner.activeTaskCount() > 0;
             }
-        }, 2000, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
+        }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
 
         // wait for at most X milliseconds for active task count to be > 0
-        ThreadUtils.waitUntil(new ExpressionEval() {
+        ThreadUtils.napUntil(new ExpressionEval() {
 
             @Override
             public Object evaluate() {
@@ -262,7 +275,7 @@ public class HubCapTest {
                 }
                 return TaskRunner.waitingTaskCount() == 0;
             }
-        }, 2000, Constants.TASK_RUN_STOP_WAIT_TIME_MS, ProcessModel.instance().getVerbose());
+        }, -1, Constants.TASK_RUN_STOP_WAIT_TIME_MS, ProcessModel.instance().getVerbose());
 
         System.out.println("------------------------------------------------------------------TEAR DOWN END");
 

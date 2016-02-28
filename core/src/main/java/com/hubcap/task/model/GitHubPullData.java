@@ -1,5 +1,7 @@
 package com.hubcap.task.model;
 
+import java.util.Date;
+
 /*
  * #%L
  * HubCap-Core
@@ -34,7 +36,67 @@ public class GitHubPullData {
      * Object contains the verbose details of the pull
      */
     public GitHubPullData() {
-        // TODO Auto-generated constructor stub
     }
 
+    public String url = null;
+
+    public long id = 0;
+
+    public String html_url = null;
+
+    public String diff_url = null;
+
+    public String patch_url = null;
+
+    public String issue_url = null;
+
+    public int number = 0;
+
+    public String state = null;
+
+    public boolean locked = false;
+
+    public String title = null;
+
+    public GitHubRemoteUser user = null;
+
+    public String body;
+
+    public Date created_at;
+
+    public Date updated_at;
+
+    public Date closed_at = null;
+
+    public Date merged_at = null;
+
+    public String merge_commit_sha = null;
+
+    public GitHubRemoteUser assignee = null;
+
+    public String commits_url = null;
+
+    public String statuses_url = null;
+
+    public boolean merged = false;
+
+    public boolean mergeable = true;
+
+    public String mergeable_state = null;
+
+    public String merged_by = null;
+
+    public long comments = 0;
+
+    public long review_comments = 0;
+
+    public long commits = 0;
+
+    public long additions = 0;
+
+    public long deletions = 0;
+
+    public long changed_files = 0;
+
+    public GitHubLinkRelationships _links;
 }

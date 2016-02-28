@@ -54,28 +54,24 @@ public class ErrorUtils {
             e = new Exception[0];
             e[0] = new Exception("Debug ErrorUtils Excetion");
         }
-        if (e != null) {
 
-            StringBuilder st = new StringBuilder();
-            for (int i = 0; i < e.length; i++) {
-                Exception ex = e[i];
-                st.append(ex.getClass().getName() + "::");
-                st.append((ex.getMessage() == null || ex.getMessage().equals("")) ? e.toString() : ex.getMessage() + "\n");
-                StackTraceElement[] elements = ex.getStackTrace();
+        StringBuilder st = new StringBuilder();
+        for (int i = 0; i < e.length; i++) {
+            Exception ex = e[i];
+            st.append(ex.getClass().getName() + "::");
+            st.append((ex.getMessage() == null || ex.getMessage().equals("")) ? e.toString() : ex.getMessage() + "\n");
+            StackTraceElement[] elements = ex.getStackTrace();
 
-                for (int j = 0; j < elements.length; j++) {
-                    StackTraceElement element = elements[j];
+            for (int j = 0; j < elements.length; j++) {
+                StackTraceElement element = elements[j];
 
-                    st.append("    - (at " + element.getClassName() + ":" + element.getLineNumber() + ")\n");
-                }
-
-                st.append("\n\n");
+                st.append("    - (at " + element.getClassName() + ":" + element.getLineNumber() + ")\n");
             }
 
-            return st.toString();
+            st.append("\n\n");
         }
 
-        return "";
+        return st.toString();
     }
 
 }

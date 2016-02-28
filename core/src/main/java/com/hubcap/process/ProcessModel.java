@@ -3,10 +3,13 @@ package com.hubcap.process;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.Date;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonParseException;
-import com.google.gson.JsonSyntaxException;
+import com.hubcap.Constants;
+import com.hubcap.lowlevel.HttpClient;
+import com.hubcap.lowlevel.ParsedHttpResponse;
 import com.hubcap.task.model.GitHubRateLimit;
 import com.hubcap.task.model.GitHubUser;
 import com.hubcap.utils.ErrorUtils;
@@ -38,17 +41,15 @@ import com.hubcap.utils.ErrorUtils;
  */
 
 /**
- * This represents the Complex State of HubCap based on the current inputs
+ * The process model contains a few properties whose lifetime and values
+ * transcend a single task. verbose / quiet printing, session user, and REPL
+ * settings are included to name a few.
  * 
  * @author Decoded4620 2016
  */
 public class ProcessModel {
 
     private static ProcessModel inst;
-
-    private GitHubUser sessionUser = new GitHubUser();
-
-    private GitHubRateLimit rateLimitData;
 
     public static ProcessModel instance() {
         if (inst == null) {
@@ -57,76 +58,131 @@ public class ProcessModel {
         return inst;
     }
 
+    // the GitHubUser authorizing requests made by HubCap
+    private GitHubUser sessionUser = null;
+
+    // the user's Rate Limiting data as reported by GitHub
+    private GitHubRateLimit rateLimitData;
+
+    // If True, the REPL is kept alive. so the user can spawn several command
+    // line requests,
+    // hitting ENTER will spawn the new job. jobs are run in parallel meaning
+    // there are no guaranteed
+    // delivery order.
     private boolean isREPLFallback = false;
 
     private boolean verbose = false;
 
-    public void setREPLFallback(boolean value) {
+    public synchronized void setREPLFallback(boolean value) {
         isREPLFallback = value;
     }
 
-    public boolean getREPLFallback() {
+    public synchronized boolean getREPLFallback() {
         return isREPLFallback;
     }
 
-    public void setVerbose(boolean value) {
+    public synchronized void setVerbose(boolean value) {
         verbose = value;
     }
 
-    public boolean getVerbose() {
+    public synchronized boolean getVerbose() {
         return verbose;
     }
 
-    public String getSessionUser() {
+    public synchronized String getSessionUser() {
         return this.sessionUser.userName;
     }
 
-    public String getSessionPasswordOrToken() {
+    public synchronized String getSessionPasswordOrToken() {
         return this.sessionUser.passwordOrToken;
     }
 
-    public void auth(String un, String tokenOrPass) {
+    /**
+     * Authorizes a user for this session. Each Subsequent call will authorize a
+     * different user, thus overriding the previous user.
+     * 
+     * @param un
+     * @param tokenOrPass
+     */
+    public synchronized void auth(String un, String tokenOrPass) {
         this.sessionUser.userName = un;
         this.sessionUser.passwordOrToken = tokenOrPass;
     }
 
-    public void setRateLimitData(GitHubRateLimit data) {
+    /**
+     * Rate Limit data based on github's view
+     * 
+     * @param data
+     */
+    private synchronized void setRateLimitData(GitHubRateLimit data) {
 
-        System.out.println("setRateLimitData(" + data.rate.remaining + ", " + data.rate.limit + ")");
+        System.out.println("setRateLimitData(" + data.rate.remaining + ", " + data.rate.limit + ", resets at: " + (new Date(data.rate.reset * 1000)).toString() + ")");
         this.rateLimitData = data;
     }
 
-    public GitHubRateLimit getRateLimitData() {
+    public synchronized GitHubRateLimit getRateLimitData() {
         return this.rateLimitData;
     }
 
     /**
-     * Singleton Access CTOR
+     * Refresh our current rate limit details so we can check prior to running
+     * more tasks.
+     */
+    public synchronized void updateRateLimitData() {
+
+        HttpClient client = new HttpClient();
+
+        String rlUrl = Constants.GITHUB_API_URL + "/rate_limit";
+
+        String un = sessionUser.userName;
+        String pwd = sessionUser.passwordOrToken;
+
+        try {
+            ParsedHttpResponse data = client.getAuthorizedRequest(rlUrl, un, pwd, null);
+            Gson gson = new Gson();
+            GitHubRateLimit rateLimit = gson.fromJson(data.getContent(), GitHubRateLimit.class);
+            setRateLimitData(rateLimit);
+        } catch (IOException ex) {
+            ErrorUtils.printStackTrace(ex);
+        }
+    }
+
+    /**
+     * Singleton Access CTOR When process model is constructed it will attempt
+     * to load a local file with your GitHub userName and your password or
+     * authorization token. If found, the session is 'auto-authorized'. If not
+     * found the session is default, and uses default GitHub rate limits.
      */
     private ProcessModel() {
+
+        boolean isException = false;
+        GitHubUser user = null;
 
         try {
             String str = new String(Files.readAllBytes(Paths.get("resources/local.json")));
             Gson gson = new Gson();
 
             try {
-                GitHubUser user = gson.fromJson(str, GitHubUser.class);
-                this.sessionUser = user;
+                user = gson.fromJson(str, GitHubUser.class);
             } catch (JsonParseException ex) {
                 ErrorUtils.printStackTrace(ex);
-                GitHubUser noUser = new GitHubUser();
-                noUser.userName = "";
-                noUser.passwordOrToken = "";
-
-                this.sessionUser = noUser;
+                isException = true;
             }
         } catch (IOException ex) {
+            isException = true;
             ErrorUtils.printStackTrace(ex);
-            GitHubUser noUser = new GitHubUser();
-            noUser.userName = "";
-            noUser.passwordOrToken = "";
+        } catch (Exception e) {
+            ErrorUtils.printStackTrace(e);
+        } finally {
+            if (user == null) {
+                user = new GitHubUser();
+            }
+            if (isException) {
 
-            this.sessionUser = noUser;
+                user.userName = "";
+                user.passwordOrToken = "";
+            }
+            this.sessionUser = user;
         }
     }
 }

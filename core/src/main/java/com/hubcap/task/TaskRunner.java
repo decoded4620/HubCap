@@ -3,10 +3,6 @@
  */
 package com.hubcap.task;
 
-import java.lang.Thread.State;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-
 /*
  * #%L
  * HubCap-Core
@@ -33,6 +29,9 @@ import java.lang.reflect.InvocationTargetException;
  * #L%
  */
 
+import java.lang.Thread.State;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
@@ -60,13 +59,12 @@ import com.hubcap.task.helpers.DefaultSearchHelper;
 import com.hubcap.task.helpers.ScavengerHelper;
 import com.hubcap.task.helpers.SearchHelperListener;
 import com.hubcap.task.helpers.TaskRunnerHelper;
+import com.hubcap.task.model.ResultsModel;
+import com.hubcap.task.model.TaskModel;
 import com.hubcap.task.state.TaskRunnerState;
 import com.hubcap.utils.ErrorUtils;
 import com.hubcap.utils.ThreadUtils;
 
-// my access token
-// https://github.com/settings/tokens/new
-// 129bf1a604dd4c46ce235b8d9d6e1ac261e50c1e
 /**
  * @author Decoded4620 2016
  */
@@ -74,126 +72,95 @@ public class TaskRunner implements Runnable {
 
     // at most 10 percent of CPU when basic search is being done.
     // task runner Thread metrics
-    public static final float CPU_LOAD_TR = 0.05f;
+    public static final float CPU_LOAD_TR = 0.025f;
 
+    // The CPU Wait expecitancy for a TaskRunner
     public static final float CPU_WAIT_TR = 2f;
 
+    // The CPU compute expectancy for a TaskRunner Thread
     public static final float CPU_COMPUTE_TR = 1f;
 
     // task runner helper Thread metrics
-    public static final float CPU_LOAD_TRH = 0.05f;
+    public static final float CPU_LOAD_TRH = 0.50f;
 
-    public static final float CPU_WAIT_TRH = 10f;
+    // task runner helper cpu wait (for wait/compute ratio)
+    public static final float CPU_WAIT_TRH = 30f;
 
+    // task runner helper cpu compute (for wait/compute ratio)
     public static final float CPU_COMPUTE_TRH = 1f;
 
     // keeps a sane list of task runners, uses concurrency package
     private static List<TaskRunner> runningTasks = Collections.synchronizedList(new ArrayList<TaskRunner>());
 
+    // Free TaskRunner instances (which are either Dormant or Idle)
     private static List<TaskRunner> freeTasks = Collections.synchronizedList(new ArrayList<TaskRunner>());
 
+    // Tasks that have thrown an error and cannot be updated. The monitor thread
+    // periodically crawls the running Tasks for any that haven't responded
+    // within a specified amount of time (i.e. they have 'hung')
     private static List<TaskRunner> unrecoverableErrorTasks = Collections.synchronizedList(new ArrayList<TaskRunner>());
 
+    // Tasks that were pushed to the executor for 'exeuction' and were rejected
+    // for some reason (i.e. another thread arrived first taking the final
+    // slot).
+    // In this case they are pushed back onto the 'orphan' stack (since they are
+    // not yet executing, they aren't considered 'free'.). This stack is
+    // scavenged
+    // each time the pruning job cleans the list and replaces missing /
+    // erroneous tasks.
     private static List<TaskRunner> orphans = Collections.synchronizedList(new ArrayList<TaskRunner>());
 
+    // When a task is taken from the free list to be pushed onto the 'active
+    // list', it lives in 'limbo' until the thread is started.
+    // This is because during this period, the thread is 'PRIMED' and does not
+    // qualify as a free task, nor does it qualify for the same
+    // rules as the running tasks (i.e. the monitor thread doesn't check limbo
+    // tasks for having frozen or errored, because they are simply sleeping).
+    // limbo tasks STILL count towards the 'waiting' task count, so they are
+    // considered when checking for 'tasks in progress'.
     private static List<TaskRunner> limboTasks = Collections.synchronizedList(new ArrayList<TaskRunner>());
 
-    // any arguments passed in when we're busy will be 'enqueued' here
-    private static List<String[]> busyArgs = Collections.synchronizedList(new ArrayList<String[]>());
+    // If all the TaskRunner instances have been assigned work, then additional
+    // inputs are saved on this queue. When the very next task completes
+    // (opening up a slot)
+    // the set of busy Arguments are first considered when pulling input. If new
+    // input comes in and there are still more busy arguments, then input is
+    // enqueued.
+    // New task threads will consume these inputs as they free up, insuring that
+    // every command is started in the order that it was input.
+    // NOTE: Tasks run in parallel
+    private static List<String[]> busyArgumentsQueue = Collections.synchronizedList(new ArrayList<String[]>());
 
+    // listeners that were added during a busy period. these are dequeued along
+    // with the Busy Argument Queue
     private static List<TaskRunnerListener[]> busyListeners = Collections.synchronizedList(new ArrayList<TaskRunnerListener[]>());
 
     // keeps a sane list of task threads, uses concurrency package
     private static List<Thread> taskThreads = Collections.synchronizedList(new ArrayList<Thread>());
 
-    private static ThreadFactory factory = null;
+    // ThreadFactory factory used for The Task runner Pool
+    private static ThreadFactory taskRunnerThreadFactory = null;
 
-    private static ExecutorService threadPool = null;
+    // thread pool for the task runner
+    private static ExecutorService taskRunnerThreadPool = null;
 
+    // waits for shutdown, and runs pruning jobs
     private static Thread monitorThread;
 
+    // periodically checks for error tasks and prunes them from the queue.
+    // Replaces any tasks that were unrecoverable, and moves others back to free
+    // tasks.
     private static Thread pruningThread;
 
+    // muches the busyArgumentQueue
     private static Thread busyMuncherThread;
 
+    // static initializer flag.
     private static boolean isTaskSystemReady = false;
 
-    /**
-     * If there are more awaiting requests for tasks...
-     * 
-     * @param listeners
-     */
-    public static void getMoreBusyTasks() {
-
-        if (TaskRunner.inactiveTaskCount() == 0) {
-            ThreadUtils.waitUntil(new ExpressionEval() {
-
-                @Override
-                public Object evaluate() {
-                    // TODO Auto-generated method stub
-                    return TaskRunner.inactiveTaskCount() > 0;
-                }
-            }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
-        }
-
-        if (TaskRunner.inactiveTaskCount() >= Constants.MIN_NOT_BUSY_THREAD_COUNT && TaskRunner.waitingTaskCount() > 0) {
-
-            int i = 0;
-            int size = 0;
-            Object[] arr = null;
-            Object[] larr = null;
-            synchronized (TaskRunner.busyArgs) {
-                synchronized (TaskRunner.busyListeners) {
-                    arr = busyArgs.toArray(new Object[busyArgs.size()]);
-                    larr = busyListeners.toArray(new Object[busyListeners.size()]);
-
-                    busyArgs.clear();
-                    busyListeners.clear();
-                }
-            }
-
-            size = arr.length;
-
-            if (size == 0) {
-                return;
-            }
-
-            // find inactive
-            // trim
-            if (size > 0) {
-
-                HubCap.instance().setState(ProcessState.RUNNING);
-
-                for (i = 0; i < size; ++i) {
-                    HubCap.instance().processArgs((String[]) arr[i], (TaskRunnerListener[]) larr[i]);
-                }
-            }
-
-            if (i > 0) {
-                if (TaskRunner.activeTaskCount() == 0) {
-                    // at least one job was added
-                    ThreadUtils.waitUntil(new ExpressionEval() {
-
-                        @Override
-                        public Object evaluate() {
-
-                            boolean ret = TaskRunner.activeTaskCount() > 0 || HubCap.instance().getState() == ProcessState.SHUTDOWN;
-
-                            if (ret) {
-                                if (ProcessModel.instance().getVerbose()) {
-                                    System.out.println("Waited successfully for busy tasks to start.");
-                                }
-                            }
-
-                            return ret;
-                        }
-                    }, -1, Constants.NEW_THREAD_SPAWN_BREATHING_TIME, ProcessModel.instance().getVerbose());
-                }
-            }
-
-        }
-    }
-
+    // Run this task.
+    // NOTE: This means that the task is on the Executor
+    // we don't run directly.
     private static void runTask(TaskRunner task) {
         if (!runningTasks.contains(task)) {
 
@@ -208,6 +175,7 @@ public class TaskRunner implements Runnable {
         }
     }
 
+    // Move task back to the free list
     private static void freeTask(TaskRunner task) {
         if (!freeTasks.contains(task)) {
 
@@ -240,13 +208,159 @@ public class TaskRunner implements Runnable {
         }
     }
 
-    public static int countBusyArgs() {
-        return busyArgs.size();
+    /**
+     * Prune error tasks and replace them with new tasks.
+     */
+    private static void prune() {
+
+        TaskRunner[] errors = null;
+        errors = unrecoverableErrorTasks.toArray(new TaskRunner[unrecoverableErrorTasks.size()]);
+        // sanity
+        unrecoverableErrorTasks.clear();
+
+        if (errors.length > 0) {
+
+            for (int x = 0; x < errors.length; ++x) {
+
+                TaskRunner currentRunner = errors[x];
+
+                if (currentRunner == null) {
+                    continue;
+                }
+
+                // sanity in case the task fails to remove itself for
+                // any reason.
+                Thread t = currentRunner.getTaskThread();
+
+                if (t != null) {
+                    taskThreads.remove(t);
+                }
+
+                // remove this from the running list
+                TaskRunner newOrOrphanedRunner = null;
+                boolean err = false;
+                try {
+                    // grab an orphan, or make a new runner.
+                    newOrOrphanedRunner = orphans.size() > 0 ? orphans.remove(orphans.size() - 1) : new TaskRunner();
+
+                    if (HubCap.instance().getState() != ProcessState.SHUTDOWN) {
+                        // runner will add its own thread to the taskthread pool
+                        taskRunnerThreadPool.execute(newOrOrphanedRunner);
+                    }
+
+                } catch (RejectedExecutionException rex) {
+                    ErrorUtils.printStackTrace(rex);
+                    err = true;
+                } catch (NullPointerException nex) {
+                    ErrorUtils.printStackTrace(nex);
+                    err = true;
+                } finally {
+                    if (err) {
+                        // put it back on the orphan list
+                        orphans.add(newOrOrphanedRunner);
+                    }
+                }
+            }
+        }
     }
 
+    /**
+     * If there are more awaiting requests for tasks...
+     * 
+     * @param listeners
+     */
+    public static synchronized void getMoreBusyTasks() {
+
+        if (TaskRunner.inactiveTaskCount() == 0) {
+            ThreadUtils.napUntil(new ExpressionEval() {
+
+                @Override
+                public Object evaluate() {
+                    return TaskRunner.inactiveTaskCount() > 0;
+                }
+            }, -1, Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
+        }
+
+        if (TaskRunner.inactiveTaskCount() >= Constants.MIN_NOT_BUSY_THREAD_COUNT && TaskRunner.waitingTaskCount() > 0) {
+
+            int i = 0;
+            int size = 0;
+            Object[] arr = null;
+            Object[] larr = null;
+            synchronized (TaskRunner.busyArgumentsQueue) {
+                synchronized (TaskRunner.busyListeners) {
+                    arr = busyArgumentsQueue.toArray(new Object[busyArgumentsQueue.size()]);
+                    larr = busyListeners.toArray(new Object[busyListeners.size()]);
+
+                    busyArgumentsQueue.clear();
+                    busyListeners.clear();
+                }
+            }
+
+            size = arr.length;
+
+            if (size == 0) {
+                return;
+            }
+
+            // find inactive
+            // trim
+            if (size > 0) {
+
+                HubCap.instance().setState(ProcessState.RUNNING);
+
+                for (i = 0; i < size; ++i) {
+                    HubCap.instance().processArgs((String[]) arr[i], (TaskRunnerListener[]) larr[i]);
+                }
+            }
+
+            if (i > 0) {
+                if (TaskRunner.activeTaskCount() == 0) {
+                    // at least one job was added
+                    ThreadUtils.napUntil(new ExpressionEval() {
+
+                        @Override
+                        public Object evaluate() {
+
+                            boolean ret = TaskRunner.activeTaskCount() > 0 || HubCap.instance().getState() == ProcessState.SHUTDOWN;
+
+                            if (ret) {
+                                if (ProcessModel.instance().getVerbose()) {
+                                    System.out.println("Waited successfully for busy tasks to start.");
+                                }
+                            }
+
+                            return ret;
+                        }
+                    }, -1, Constants.NEW_THREAD_SPAWN_BREATHING_TIME, ProcessModel.instance().getVerbose());
+                }
+            }
+
+        }
+    }
+
+    /**
+     * Returns the current number of queued arguments
+     * 
+     * @return
+     */
+    public static int countBusyArgs() {
+        return busyArgumentsQueue.size();
+    }
+
+    /**
+     * Add more arguments to the busy queue. This can happen both during busy
+     * state as well as during non-busy states where the busy argument queue has
+     * not been fully processed.
+     * 
+     * @param args
+     *            Command line args
+     * @param listeners
+     *            List of task runner listeners to match the args.
+     */
     public static void addBusyArgs(String[] args, TaskRunnerListener[] listeners) {
         // push both
-        busyArgs.add(args);
+        busyArgumentsQueue.add(args);
         busyListeners.add(listeners);
     }
 
@@ -294,9 +408,9 @@ public class TaskRunner implements Runnable {
 
         int act = 0;
         synchronized (runningTasks) {
-            synchronized (busyArgs) {
+            synchronized (busyArgumentsQueue) {
                 synchronized (limboTasks) {
-                    act = runningTasks.size() + busyArgs.size() + limboTasks.size();
+                    act = runningTasks.size() + busyArgumentsQueue.size() + limboTasks.size();
                 }
             }
         }
@@ -360,12 +474,12 @@ public class TaskRunner implements Runnable {
         if (isTaskSystemReady) {
             System.out.println("stopThreadPool()");
 
-            if (TaskRunner.factory != null) {
-                TaskRunner.factory = null;
+            if (TaskRunner.taskRunnerThreadFactory != null) {
+                TaskRunner.taskRunnerThreadFactory = null;
             }
 
             // insure no more threads can be executed.
-            threadPool.shutdown();
+            taskRunnerThreadPool.shutdown();
 
             Object[] set = {
                 runningTasks,
@@ -433,9 +547,9 @@ public class TaskRunner implements Runnable {
 
             // used to id the threads 'atomically'
             final AtomicLong count = new AtomicLong(0);
-            if (TaskRunner.factory == null) {
+            if (TaskRunner.taskRunnerThreadFactory == null) {
 
-                TaskRunner.factory = new ThreadFactory() {
+                TaskRunner.taskRunnerThreadFactory = new ThreadFactory() {
 
                     @Override
                     public Thread newThread(Runnable r) {
@@ -443,7 +557,6 @@ public class TaskRunner implements Runnable {
                             throw new IllegalStateException("Cannot add duplicate runnable to running tasks");
                         }
 
-                        // TODO Auto-generated method stub
                         Thread thread = new Thread(r);
                         thread.setDaemon(false);
                         thread.setName("HubcapTaskRunnerThread-" + count.getAndIncrement());
@@ -466,10 +579,10 @@ public class TaskRunner implements Runnable {
                 int numThreads = ThreadUtils.getStableThreadCount(CPU_LOAD_TR, CPU_WAIT_TR, CPU_COMPUTE_TR, Constants.MAX_TASK_RUNNER_THREADS);
 
                 System.out.println("creating: " + numThreads + " threads for hubcap");
-                TaskRunner.threadPool = Executors.newFixedThreadPool(numThreads, TaskRunner.factory);
+                TaskRunner.taskRunnerThreadPool = Executors.newFixedThreadPool(numThreads, TaskRunner.taskRunnerThreadFactory);
                 for (int i = 0; i < numThreads; ++i) {
                     TaskRunner tr = new TaskRunner();
-                    threadPool.execute(tr);
+                    taskRunnerThreadPool.execute(tr);
                 }
 
                 // pass the monitoring code to another thread
@@ -479,7 +592,7 @@ public class TaskRunner implements Runnable {
                     @Override
                     public void run() {
 
-                        while (!threadPool.isShutdown()) {
+                        while (!taskRunnerThreadPool.isShutdown()) {
                             try {
                                 TaskRunner.rebalance();
                                 Thread.sleep(Constants.POOL_SHUTDOWN_CHECK_INTERVAL);
@@ -494,7 +607,7 @@ public class TaskRunner implements Runnable {
 
                         System.out.println("Thread Pool was shutdown");
 
-                        while (!threadPool.isTerminated()) {
+                        while (!taskRunnerThreadPool.isTerminated()) {
                             try {
                                 Thread.sleep(Constants.POOL_TERM_CHECK_INTERVAL);
                             } catch (InterruptedException ex) {
@@ -543,7 +656,7 @@ public class TaskRunner implements Runnable {
             }
         }
 
-        if (busyMuncherThread == null && busyArgs.size() > 0) {
+        if (busyMuncherThread == null && busyArgumentsQueue.size() > 0) {
             busyMuncherThread = new Thread(new Runnable() {
 
                 @Override
@@ -559,59 +672,6 @@ public class TaskRunner implements Runnable {
                 busyMuncherThread.setName("__BusyMuncher");
                 busyMuncherThread.setDaemon(true);
                 busyMuncherThread.start();
-            }
-        }
-    }
-
-    private static void prune() {
-
-        TaskRunner[] errors = null;
-        errors = unrecoverableErrorTasks.toArray(new TaskRunner[unrecoverableErrorTasks.size()]);
-        // sanity
-        unrecoverableErrorTasks.clear();
-
-        if (errors.length > 0) {
-
-            for (int x = 0; x < errors.length; ++x) {
-
-                TaskRunner currentRunner = errors[x];
-
-                if (currentRunner == null) {
-                    continue;
-                }
-
-                // sanity in case the task fails to remove itself for
-                // any reason.
-                Thread t = currentRunner.getTaskThread();
-
-                if (t != null) {
-                    taskThreads.remove(t);
-                }
-
-                // remove this from the running list
-                TaskRunner newOrOrphanedRunner = null;
-                boolean err = false;
-                try {
-                    // grab an orphan, or make a new runner.
-                    newOrOrphanedRunner = orphans.size() > 0 ? orphans.remove(orphans.size() - 1) : new TaskRunner();
-
-                    if (HubCap.instance().getState() != ProcessState.SHUTDOWN) {
-                        // runner will add its own thread to the taskthread pool
-                        threadPool.execute(newOrOrphanedRunner);
-                    }
-
-                } catch (RejectedExecutionException rex) {
-                    ErrorUtils.printStackTrace(rex);
-                    err = true;
-                } catch (NullPointerException nex) {
-                    ErrorUtils.printStackTrace(nex);
-                    err = true;
-                } finally {
-                    if (err) {
-                        // put it back on the orphan list
-                        orphans.add(newOrOrphanedRunner);
-                    }
-                }
             }
         }
     }
@@ -653,11 +713,14 @@ public class TaskRunner implements Runnable {
     // this thread will be abandoned and a new one created.
     private boolean canRecoverFromError = true;
 
+    // shared resource that we aggregate to
+    public static ResultsModel sharedResource_resultModel;
+
     /**
      * Private Constructor, use 'createNew()' to make new task runners.
      */
     private TaskRunner() {
-        // TODO Auto-generated constructor stub
+
         taskId = (new Date().getTime());
         Random r = new Random(taskId);
 
@@ -762,7 +825,7 @@ public class TaskRunner implements Runnable {
                 }
 
                 // create the pool but don't fire up any helpers
-                helperPool = Executors.newFixedThreadPool(maxHelpers, TaskRunner.factory);
+                helperPool = Executors.newFixedThreadPool(maxHelpers, TaskRunner.taskRunnerThreadFactory);
             }
 
             TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
@@ -777,6 +840,10 @@ public class TaskRunner implements Runnable {
                 setTaskState(TaskRunnerState.ACTIVE);
 
                 this.taskModel = CLIOptionBuilder.buildInputOptionsModel(this.taskArgs);
+
+                synchronized (sharedResource_resultModel) {
+                    sharedResource_resultModel.addTaskModel(taskModel);
+                }
 
             } catch (ParseException e) {
 
@@ -848,14 +915,12 @@ public class TaskRunner implements Runnable {
 
             if (taskModel != null) {
                 // the task mode
-                TaskRunnerHelper helper = null;
 
                 // default listener
                 SearchHelperListener listener = new SearchHelperListener() {
 
                     @Override
                     public void processTaskHelperError(Exception ex, boolean canRecover) {
-                        // TODO Auto-generated method stub
                         TaskRunner.this.setTaskState(TaskRunnerState.ERROR);
 
                         errorMessage = ErrorUtils.getStackTrace(ex);
@@ -882,13 +947,14 @@ public class TaskRunner implements Runnable {
 
                 switch (taskModel.getTaskMode()) {
                     case SEARCH:
-                        helper = this.spawnHelper(DefaultSearchHelper.class, listener);
+                        this.spawnHelper(DefaultSearchHelper.class, listener);
                         break;
                     case DEEP_SEARCH:
-                        helper = this.spawnHelper(DeepSearchHelper.class, listener);
+                        this.spawnHelper(DeepSearchHelper.class, listener);
                         break;
                     case SCAVENGER:
-                        helper = this.spawnHelper(ScavengerHelper.class, listener);
+                        this.spawnHelper(ScavengerHelper.class, listener);
+                        break;
                     case DEBUG: {
 
                         // special debug listener
@@ -896,7 +962,6 @@ public class TaskRunner implements Runnable {
 
                             @Override
                             public void processTaskHelperError(Exception ex, boolean canRecover) {
-                                // TODO Auto-generated method stub
                                 TaskRunner.this.setTaskState(TaskRunnerState.ERROR);
 
                                 errorMessage =
@@ -921,7 +986,7 @@ public class TaskRunner implements Runnable {
                                 processTaskDataForKey(key, taskData);
                             }
                         };
-                        helper = this.spawnHelper(DebugSearchHelper.class, debugListener);
+                        this.spawnHelper(DebugSearchHelper.class, debugListener);
                         break;
                     }
                     default:
@@ -1110,6 +1175,12 @@ public class TaskRunner implements Runnable {
         }
     }
 
+    /**
+     * Processes task data for a specified data key.
+     * 
+     * @param key
+     * @param data
+     */
     private void processTaskDataForKey(String key, Object data) {
         taskModel.aggregateForKey(key, data);
         TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
@@ -1130,6 +1201,9 @@ public class TaskRunner implements Runnable {
      */
     private void processTaskData(Object data) {
 
+        if (ProcessModel.instance().getVerbose()) {
+            System.out.println("Processing Task Data: " + data.getClass().getName());
+        }
         taskModel.aggregate(data);
         TaskRunnerListener[] list = listeners.toArray(new TaskRunnerListener[listeners.size()]);
 
@@ -1139,6 +1213,11 @@ public class TaskRunner implements Runnable {
         }
     }
 
+    /**
+     * Set the state of this task runner
+     * 
+     * @param state
+     */
     private void setTaskState(TaskRunnerState state) {
         if (this.taskState != state) {
             this.taskState = state;

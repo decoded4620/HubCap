@@ -33,29 +33,55 @@ import java.util.Iterator;
 import java.util.List;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonParseException;
 import com.google.gson.reflect.TypeToken;
 import com.hubcap.Constants;
 import com.hubcap.lowlevel.HttpClient;
 import com.hubcap.lowlevel.ParsedHttpResponse;
 import com.hubcap.process.ProcessModel;
-import com.hubcap.task.TaskModel;
-import com.hubcap.task.model.AggregatorModel;
 import com.hubcap.task.model.GitHubPull;
 import com.hubcap.task.model.GitHubPullData;
 import com.hubcap.task.model.GitHubRepo;
+import com.hubcap.task.model.ScavengerModel;
+import com.hubcap.task.model.TaskModel;
+import com.hubcap.utils.ErrorUtils;
 import com.hubcap.utils.ThreadUtils;
 
-public class AggregatorDrone implements Runnable {
+/**
+ * The GitHubOrgScavengerDrone is a collector of information for GitHub
+ * Repositories. Its job is to focus on a single organization. If you pass more
+ * than a single pair of parameters, (i.e. Org1 10 Org2 10), then an
+ * AggregatorDrone is created for each Organization. The Drone will find all
+ * repositories belonging to the Organization, as well as spawning several
+ * PullAggregatorDrones which aggregate the pull data for Repositories.
+ * 
+ * @author Decoded4620 2016
+ */
+public class GitHubOrgScavengerDrone implements Runnable {
 
-    // model data for THIS aggregator only
-    private AggregatorModel aggregatorModel;
+    // Represents the data aggregated specifically by This AggregatorDrone
+    // instance
+    private ScavengerModel scavengerModel;
 
-    private TaskModel taskModel;
+    // the shared resource taskModel that all AggregatorDrone instances are
+    // writing
+    // to.
+    // Any modification operations, or iteration operations should be done
+    // within synchronized{} blocks.
+    private TaskModel sharedResource_taskModel;
 
+    // the organization that this repository is Crawling.
     private String orgName;
 
+    // the Communication Object. There is one per aggregate drone to insure
+    // true threaded autonomy when making calls.
+    // rather than having a singleton instance, for example.
     private HttpClient client = new HttpClient();
 
+    // the current thread that is executing this Drone.
+    // it should likely not be the main thread, as these objects
+    // are specifically created via thread factory (rather than leaving the
+    // choice up to the Executor's implementation)
     private Thread myThread;
 
     /**
@@ -63,17 +89,29 @@ public class AggregatorDrone implements Runnable {
      * 
      * @param model
      * @param org
-     * @param count
+     * @param maxResults
      */
-    public AggregatorDrone(TaskModel model, String org, int count) {
+    public GitHubOrgScavengerDrone(TaskModel model, String org, int maxResults) {
 
-        System.out.println("AggregatorDrone::Construct(" + model + ", " + org + ", final result count: " + count + ")");
+        System.out.println("GitHubOrgScavengerDrone::Construct(" + model + ", " + org + ", final result count: " + maxResults + ")");
         this.orgName = org;
-        this.taskModel = model;
-        aggregatorModel = new AggregatorModel();
-        aggregatorModel.maxResults = count;
-        taskModel.aggregateForKey(this.orgName, aggregatorModel);
+        this.sharedResource_taskModel = model;
+        scavengerModel = new ScavengerModel();
+
+        sharedResource_taskModel.addScavengerModel(scavengerModel);
+        sharedResource_taskModel.aggregateForKey(this.orgName, scavengerModel);
+
+        scavengerModel.maxResults = maxResults;
         client.verbose = ProcessModel.instance().getVerbose();
+    }
+
+    /**
+     * Thread reference for interruption purposes.
+     * 
+     * @return
+     */
+    public Thread getThread() {
+        return myThread;
     }
 
     @Override
@@ -85,14 +123,14 @@ public class AggregatorDrone implements Runnable {
         if (ProcessModel.instance().getVerbose()) {
             System.out.println("AggregatorDrone::run()");
         }
-        String since = null;
         // seed url, use this to find out what pages we've got
-        String seedUrl = "https://api.github.com/orgs/" + orgName + "/repos";
-        String un = taskModel.getUserName();
-        String pwd = taskModel.getPasswordOrToken();
+        String seedUrl = Constants.GITHUB_API_URL + "/orgs/" + orgName + "/repos";
+
+        // enable authorization automatically for this drone
+        client.setIsAuthorizedClient(true, ProcessModel.instance().getSessionUser(), ProcessModel.instance().getSessionPasswordOrToken());
 
         // find the start and end pages first
-        ParsedHttpResponse headResponse = client.safeHeadAuthorizedRequest(seedUrl, un, pwd, null);
+        ParsedHttpResponse headResponse = client.safeHeadRequest(seedUrl, null);
 
         String currPageLink = seedUrl;
         String lastPageLink = "";
@@ -122,8 +160,8 @@ public class AggregatorDrone implements Runnable {
 
             List<GitHubRepo> aggregates = Collections.synchronizedList(new ArrayList<GitHubRepo>());
 
-            aggregatorModel.aggregateForKey("aggregateData", aggregates);
-            aggregatorModel.aggregateForKey("orgName", orgName);
+            scavengerModel.aggregateForKey(ScavengerModel.KEY_AGG_DATA, aggregates);
+            scavengerModel.aggregateForKey(ScavengerModel.KEY_ORG_NAME, orgName);
 
             do {
                 if (ProcessModel.instance().getVerbose()) {
@@ -133,7 +171,7 @@ public class AggregatorDrone implements Runnable {
                 String data = "";
                 Gson gson = new Gson();
 
-                ParsedHttpResponse r = client.safeAuthorizedRequest(currPageLink, un, pwd, null);
+                ParsedHttpResponse r = client.safeGetRequest(currPageLink, null);
 
                 if (r == null) {
                     break;
@@ -170,31 +208,28 @@ public class AggregatorDrone implements Runnable {
                 }
 
                 // sanity, reset this here.
-                aggregatorModel.aggregateForKey("aggregateData", aggregates);
+                scavengerModel.aggregateForKey(ScavengerModel.KEY_AGG_DATA, aggregates);
 
-                // TODO REMOVE - help with rate limit!!
-                break;
             } while (!currPageLink.equals(lastPageLink));
 
-            if (ProcessModel.instance().getVerbose()) {
-                System.out.println("Aggregated: " + aggregates.size() + " repositories");
-            }
             int pullCnt = 0;
 
             List<Thread> runners = new ArrayList<Thread>();
+            if (ProcessModel.instance().getVerbose()) {
+                System.out.println("Aggregating Pulls for : " + aggregates.size() + " repositories");
+            }
             // after aggregation, lets go get the pull data.
             // do it in parallel.
             for (GitHubRepo repo : aggregates) {
-
-                if (repo.isPrivate == false) {
-                    Thread t = new Thread(new PullAggregator(repo, un, pwd));
+                if (!repo.isPrivate) {
+                    HttpClient aggregatorClient = new HttpClient();
+                    client.copyAuth(aggregatorClient);
+                    Thread t = new Thread(new PullAggregator(repo, aggregatorClient));
                     t.setDaemon(false);
                     t.setName("PullAggregator::" + orgName + "::" + repo.name);
                     t.run();
                     runners.add(t);
                 }
-                // TODO - remove helps with rate limit
-                // break;
             }
 
             while (runners.size() > 0) {
@@ -219,26 +254,26 @@ public class AggregatorDrone implements Runnable {
         } else {
             System.err.println("No response was found for: " + seedUrl);
         }
+
+        myThread = null;
     }
 
     public class PullAggregatorDrone implements Runnable {
 
-        private String un;
-
-        private String pwd;
-
         public String pUrl;
 
-        public int maxPulls = 3;
+        private HttpClient pullClient;
+
+        public int maxPulls = Constants.MAX_HTTP_REQUESTS_PER_THREAD;
 
         List<GitHubPull> pullsToProcess = new ArrayList<GitHubPull>();
 
-        public void addPull(GitHubPull pull, String un, String pwd) {
+        public PullAggregatorDrone(HttpClient pullClient) {
+            this.pullClient = pullClient;
+        }
 
-            this.un = un;
-            this.pwd = pwd;
+        public void addPull(GitHubPull pull) {
             pullsToProcess.add(pull);
-
         }
 
         public boolean isFull() {
@@ -254,24 +289,27 @@ public class AggregatorDrone implements Runnable {
 
                 String pullUrl = pUrl + "/" + String.valueOf(pull.number);
 
-                ParsedHttpResponse pullDataResponse = client.safeAuthorizedRequest(pullUrl, un, pwd, null);
+                ParsedHttpResponse pullDataResponse = this.pullClient.safeGetRequest(pullUrl, null);
 
-                if (pullDataResponse == null) {
-                    continue;
+                if (pullDataResponse != null) {
+
+                    String pullData = pullDataResponse.getContent();
+                    Gson gson = new Gson();
+
+                    if (pullData != null) {
+                        try {
+                            pullData = pullData.replace("\\\"", "'");
+                            GitHubPullData pullDataObj = gson.fromJson(pullData, GitHubPullData.class);
+                            pull.pullData = pullDataObj;
+                        } catch (JsonParseException e) {
+                            if (ProcessModel.instance().getVerbose()) {
+                                ErrorUtils.printStackTrace(e);
+                            }
+                        }
+                    } else {
+                        System.out.println("No Pull Data returned for pull url: " + pUrl);
+                    }
                 }
-
-                String pullData = pullDataResponse.getContent();
-                Gson gson = new Gson();
-                if (pullData != null) {
-                    GitHubPullData data = gson.fromJson(pullData, GitHubPullData.class);
-                    pull.pullData = data;
-                } else {
-                    System.out.println("No Pull Data returned for pull url: " + pUrl);
-                }
-
-                // TODO - REMOVE helps with rate limit
-                // break;
-
             }
         }
     }
@@ -280,25 +318,26 @@ public class AggregatorDrone implements Runnable {
 
         private GitHubRepo repo;
 
-        private String un;
+        private HttpClient aggregatorClient;
 
-        private String pwd;
-
-        public PullAggregator(GitHubRepo repo, String un, String pwd) {
-            this.un = un;
-            this.pwd = pwd;
+        public PullAggregator(GitHubRepo repo, HttpClient inClient) {
             this.repo = repo;
+            this.aggregatorClient = inClient;
         }
 
         @Override
         public void run() {
+
+            if (ProcessModel.instance().getVerbose()) {
+                System.out.println("GitHubScavengerDrone::run() => " + Thread.currentThread().getName());
+            }
 
             // remove the template from the end
             // Lazy Mans Template expansion :P. Hey its (going on) 4 day project
             String pUrl = repo.pulls_url.replace("{/number}", "");
 
             // get the current page
-            ParsedHttpResponse pullsResponse = client.safeAuthorizedRequest(pUrl, un, pwd, null);
+            ParsedHttpResponse pullsResponse = aggregatorClient.safeGetRequest(pUrl, null);
 
             if (pullsResponse == null) {
                 return;
@@ -313,7 +352,11 @@ public class AggregatorDrone implements Runnable {
 
             // up to 10 per drone
             List<Thread> pullDrones = new ArrayList<Thread>();
-            PullAggregatorDrone pullDrone = new PullAggregatorDrone();
+
+            HttpClient pullClient = new HttpClient();
+            aggregatorClient.copyAuth(pullClient);
+            PullAggregatorDrone pullDrone = new PullAggregatorDrone(pullClient);
+
             for (GitHubPull pull : pullObjects) {
 
                 if (pull.locked) {
@@ -321,7 +364,7 @@ public class AggregatorDrone implements Runnable {
                 }
 
                 pullDrone.pUrl = pUrl;
-                pullDrone.addPull(pull, un, pwd);
+                pullDrone.addPull(pull);
 
                 if (pullDrone.isFull()) {
 
@@ -331,15 +374,16 @@ public class AggregatorDrone implements Runnable {
                     t.setName("PullAggregatorDrone::" + pull.url);
                     t.start();
 
+                    pullClient = new HttpClient();
+                    pullClient.setIsAuthorizedClient(true, ProcessModel.instance().getSessionUser(), ProcessModel.instance().getSessionPasswordOrToken());
                     // reset this for next round
-                    pullDrone = new PullAggregatorDrone();
+                    pullDrone = new PullAggregatorDrone(pullClient);
                 }
-
-                // TODO - REMOVE helps with rate limit
-                // break;
-
             }
 
+            if (ProcessModel.instance().getVerbose()) {
+                System.out.println("\tWaiting for " + pullDrones.size() + " Pull Aggregator Drones to fetch data for us");
+            }
             // wait for death
             while (pullDrones.size() > 0) {
 
@@ -359,8 +403,8 @@ public class AggregatorDrone implements Runnable {
             repo.pulls = pullObjects;
 
             if (ProcessModel.instance().getVerbose()) {
-                System.out.println("Aggregator Finished! Repo: " + repo.id + ": " + repo.name + " " + repo.url + ", pulls: " + repo.pulls.size() + ", forks: "
-                        + repo.forks_count + ", stars: " + repo.stargazers_count);
+                System.out.println("GitHubScavengerDrone Collected: " + repo.id + ": " + repo.name + "\n\turl:[" + repo.url + "]\n\tpulls: " + repo.pulls.size()
+                        + "\n\tforks: " + repo.forks_count + "\n\tstars: " + repo.stargazers_count);
             }
 
             return;

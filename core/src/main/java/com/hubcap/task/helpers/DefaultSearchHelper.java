@@ -1,34 +1,22 @@
 package com.hubcap.task.helpers;
 
-import java.io.IOException;
 import java.lang.Thread.State;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
-import java.util.ConcurrentModificationException;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.cli.CommandLine;
 
-import com.google.gson.Gson;
 import com.hubcap.Constants;
-import com.hubcap.lowlevel.HttpClient;
-import com.hubcap.lowlevel.ParsedHttpResponse;
 import com.hubcap.process.ProcessModel;
 import com.hubcap.task.TaskRunner;
-import com.hubcap.task.helpers.drones.AggregatorDrone;
-import com.hubcap.task.model.AggregatorModel;
-import com.hubcap.task.model.GitHubRateLimit;
-import com.hubcap.task.model.GitHubRepo;
+import com.hubcap.task.helpers.drones.GitHubOrgScavengerDrone;
+import com.hubcap.task.model.ScavengerModel;
 import com.hubcap.utils.ErrorUtils;
 import com.hubcap.utils.ThreadUtils;
 
@@ -100,22 +88,9 @@ public class DefaultSearchHelper extends TaskRunnerHelper {
         }
 
         if (cLen % 2 == 0) {
-            HttpClient client = new HttpClient();
 
-            synchronized (ProcessModel.instance()) {
-                String rlUrl = "https://api.github.com/rate_limit";
-                String un = taskModel.getUserName();
-                String pwd = taskModel.getPasswordOrToken();
-                try {
-                    ParsedHttpResponse data = client.getAuthorizedRequest(rlUrl, un, pwd, null);
-                    Gson gson = new Gson();
-                    GitHubRateLimit rateLimit = gson.fromJson(data.getContent(), GitHubRateLimit.class);
-
-                    ProcessModel.instance().setRateLimitData(rateLimit);
-                } catch (IOException ex) {
-                    ErrorUtils.printStackTrace(ex);
-                }
-            }
+            // each helper has its own HttpClient
+            ProcessModel.instance().updateRateLimitData();
 
             for (int i = 0; i < cLen; i += 2) {
 
@@ -145,7 +120,7 @@ public class DefaultSearchHelper extends TaskRunnerHelper {
 
                     try {
                         synchronized (droneThreads) {
-                            Thread t = new Thread(new AggregatorDrone(this.taskModel, orgName, count));
+                            Thread t = new Thread(new GitHubOrgScavengerDrone(this.taskModel, orgName, count));
                             droneThreads.add(t);
 
                             t.setName("drone" + String.valueOf(owner.getTaskId()) + "-" + String.valueOf(new Date().getTime()));
@@ -190,12 +165,12 @@ public class DefaultSearchHelper extends TaskRunnerHelper {
 
                     Object value = aggData.get(key);
 
-                    if (value instanceof AggregatorModel == false) {
+                    if (value instanceof ScavengerModel == false) {
                         continue;
                     }
 
                     // ask the model to calculate from its current state
-                    AggregatorModel model = (AggregatorModel) value;
+                    ScavengerModel model = (ScavengerModel) value;
                     synchronized (model) {
                         model.calculate();
                     }

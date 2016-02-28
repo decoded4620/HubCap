@@ -28,53 +28,53 @@ package com.hubcap.task.model;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 
-public class BaseModel {
+import com.hubcap.task.model.TaskModel.TaskModelResult;
 
-    private List<Object> aggregateData = Collections.synchronizedList(new ArrayList<Object>());
+public class ResultsModel extends BaseModel {
 
-    private Map<String, Object> aggregateDataMap;
+    private List<TaskModel> taskModels = null;
 
-    public BaseModel() {
-        // this insures we can set
-        aggregateDataMap = Collections.synchronizedMap(new HashMap<String, Object>());
+    public ResultsModel() {
+        taskModels = Collections.synchronizedList(new ArrayList<TaskModel>());
     }
 
-    public void aggregate(Object moreData) {
-        synchronized (aggregateData) {
-            if (aggregateData.contains(moreData) == false) {
-                aggregateData.add(moreData);
-            }
+    public TaskModel[] getTaskModels() {
+        if (taskModels == null) {
+            return new TaskModel[0];
         }
+
+        TaskModel[] m = new TaskModel[taskModels.size()];
+        return taskModels.toArray(m);
     }
 
-    public void aggregateForKey(String key, Object moreData) {
-        synchronized (aggregateDataMap) {
-            if (aggregateDataMap.containsKey(key) == false) {
-                aggregateDataMap.put(key, moreData);
-            }
-        }
+    public void addTaskModel(TaskModel taskModel) {
+        taskModels.add(taskModel);
     }
 
-    public Object getAggregatedDataForKey(String key) {
-        synchronized (aggregateDataMap) {
-            return aggregateDataMap.get(key);
-        }
-    }
-
-    public List<Object> getAggregateData() {
-        return Collections.unmodifiableList(aggregateData);
-    }
-
-    public Map<String, Object> getAggregateDataMap() {
-        return Collections.unmodifiableMap(aggregateDataMap);
-    }
-
+    @Override
     public Object calculate() {
-        return null;
+        ProcessResults r = new ProcessResults();
+        synchronized (taskModels) {
+            r.results = new TaskModelResult[taskModels.size()];
+
+            Iterator<TaskModel> it = taskModels.iterator();
+
+            int i = 0;
+            while (it.hasNext()) {
+                TaskModel t = it.next();
+                r.results[i++] = (TaskModelResult) t.calculate();
+            }
+        }
+
+        return r;
+    }
+
+    public class ProcessResults {
+
+        public TaskModelResult[] results;
     }
 
 }

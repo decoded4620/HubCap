@@ -2,8 +2,9 @@ package com.hubcap.task.helpers;
 
 import java.util.Properties;
 
-import com.hubcap.task.TaskModel;
+import com.hubcap.Constants;
 import com.hubcap.task.TaskRunner;
+import com.hubcap.task.model.TaskModel;
 
 /*
  * #%L
@@ -30,7 +31,11 @@ import com.hubcap.task.TaskRunner;
  * THE SOFTWARE.
  * #L%
  */
-
+/**
+ * This class provides a base for Specialized SearchHelpers.
+ * 
+ * @author Decoded4620 2016
+ */
 public class TaskRunnerHelper implements Runnable {
 
     // object to handle events from this search helper
@@ -39,28 +44,38 @@ public class TaskRunnerHelper implements Runnable {
     // the task model
     protected TaskModel taskModel;
 
+    // copy of the options passed into the command line
+    // under the -D java option flag (JAVA_D)
     protected Properties opts;
 
     // the task runner which owns this task helper
     protected TaskRunner owner;
 
+    /**
+     * CTOR - the Owning TaskRunner.
+     * 
+     * @param owner
+     */
     public TaskRunnerHelper(TaskRunner owner) {
 
         this.owner = owner;
         this.taskModel = this.owner.getTaskModel();
 
-        opts = taskModel.getCommandLine().getOptionProperties("D");
-        // TODO Auto-generated constructor stub
+        opts = taskModel.getCommandLine().getOptionProperties(Constants.JAVA_D);
     }
 
+    /**
+     * Attach a listener to this helper to handle any internal events.
+     * 
+     * @param listener
+     */
     public void setListener(SearchHelperListener listener) {
         this.listener = listener;
     }
 
     @Override
     public void run() {
-        // TODO Auto-generated method stub
-
+        // override in child class
     }
 
     public void die() {

@@ -54,14 +54,38 @@ public class ThreadUtils {
         }
     }
 
+    /**
+     * Returns the main Thread.
+     * 
+     * @return
+     */
     public static Thread getMainThread() {
         return mainThread;
     }
 
+    /**
+     * Returns true if the thread in question is the 'main thread'
+     * 
+     * @param t
+     *            a Thread to check against the main thread.
+     * @return true if the Thread passed in is the main thread.
+     */
     public static boolean isMainThread(Thread t) {
         return t == mainThread;
     }
 
+    /**
+     * Fold (interrupt and /or join) the thread.
+     * 
+     * @param t
+     *            The Thread to fold.
+     * @param join
+     *            True to join and interrupt the thread, false, to only
+     *            interrupt.
+     * @param verbose
+     *            true to be verbose.
+     * @return true if the thread folded successfully.
+     */
     public static boolean fold(Thread t, boolean join, boolean verbose) {
         if (t != mainThread) {
 
@@ -122,6 +146,8 @@ public class ThreadUtils {
         if (maxThreads > 0) {
             numThreads = Math.min(maxThreads, numThreads);
         }
+
+        System.out.println("Getting Stable thread count:" + numThreads);
 
         return numThreads;
     }
@@ -188,7 +214,8 @@ public class ThreadUtils {
     }
 
     /**
-     * Performs a 'safe sleep' forever until eval.evaluate() returns true.
+     * Performs a 'safe sleep' at tiny intervals until eval.evaluate() returns
+     * true. or until the maxTime has been reached.
      * 
      * @param eval
      *            The ExpressionEval to evaluate for true/false response.
@@ -197,10 +224,12 @@ public class ThreadUtils {
      *            never returns true. if you pass -1 for this parameter,
      *            Long.MAX_TIME will be used, which is essentially more time
      *            than you or i will live on this planet.
+     * @param verbose
+     *            true to print any errors.
      * @return a <code>boolean</code>, <code>true</code> if the wait completed
      *         normally. <code>false</code> otherwise.
      */
-    public static boolean waitUntil(ExpressionEval eval, long maxTime, long interval, boolean verbose) {
+    public static boolean napUntil(ExpressionEval eval, long maxTime, long interval, boolean verbose) {
 
         // not infinite, but a long time.
         if (maxTime == -1) {
@@ -215,11 +244,10 @@ public class ThreadUtils {
         // wait a bit for tasks to start
         while ((boolean) eval.evaluate() != true) {
             if (!ThreadUtils.safeSleep(interval, verbose) || (maxTime >= 0 && (new Date().getTime()) - start > maxTime)) {
-                break;
+                return false;
             }
         }
 
         return true;
     }
-
 }

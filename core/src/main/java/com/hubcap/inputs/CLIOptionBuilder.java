@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Properties;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -44,7 +43,7 @@ import com.hubcap.Constants;
 import com.hubcap.HubCap;
 import com.hubcap.lowlevel.HubCapOptionsParser;
 import com.hubcap.process.ProcessModel;
-import com.hubcap.task.TaskModel;
+import com.hubcap.task.model.TaskModel;
 import com.hubcap.task.state.TaskMode;
 import com.hubcap.utils.ErrorUtils;
 
@@ -87,8 +86,7 @@ public class CLIOptionBuilder {
         availableOptions.addOption("r", "no-repl", false, "DONT fallback to repl mode");
         availableOptions.addOption("s", "shutdown-after", false, "Shutdown after results are complete");
         availableOptions.addOption("m", "mode", true, "Set the task mode, valid settings are 'search', 'deepsearch', 'watch', 'debug', default is 'search'");
-        availableOptions.addOption("q", "query", true, "Query");
-        availableOptions.addOption("o", "queryOption", true, "Query Option");
+        availableOptions.addOption("q", "quiet", true, "Be quiet (cancels verbose)");
 
         Option property = Option.builder("D").hasArgs().valueSeparator('=').build();
         availableOptions.addOption(property);
@@ -100,8 +98,15 @@ public class CLIOptionBuilder {
             if (availableOptions == null) {
                 buildAvailableOptions();
             }
+            CommandLine cmd = null;
 
-            CommandLine cmd = parser.parse(availableOptions, args);
+            try {
+                cmd = parser.parse(availableOptions, args);
+            } catch (ParseException ex) {
+                HelpFormatter formatter = new HelpFormatter();
+                formatter.printHelp("How to use", availableOptions);
+                throw ex;
+            }
 
             // check for some default globals to be available within the
             // provided
@@ -118,7 +123,7 @@ public class CLIOptionBuilder {
             if (cmd.hasOption("h")) {
                 // automatically generate the help statement
                 HelpFormatter formatter = new HelpFormatter();
-                formatter.printHelp("example", availableOptions);
+                formatter.printHelp("How to use", availableOptions);
 
                 return null;
             }
@@ -151,7 +156,7 @@ public class CLIOptionBuilder {
                 }
             }
 
-            TaskModel model = new TaskModel("decoded4620", "129bf1a604dd4c46ce235b8d9d6e1ac261e50c1e");
+            TaskModel model = new TaskModel();
 
             model.setCommandLine(cmd);
 

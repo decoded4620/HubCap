@@ -29,11 +29,7 @@ package com.hubcap.task.helpers;
 import java.util.Date;
 
 import com.hubcap.Constants;
-import com.hubcap.process.ProcessModel;
-import com.hubcap.task.TaskModel;
 import com.hubcap.task.TaskRunner;
-import com.hubcap.task.state.TaskRunnerState;
-import com.hubcap.utils.ErrorUtils;
 
 public class DebugSearchHelper extends DefaultSearchHelper {
 

@@ -1,16 +1,13 @@
-package com.hubcap.task;
+package com.hubcap.task.model;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
-import java.util.function.BiFunction;
 
 import org.apache.commons.cli.CommandLine;
 
-import com.hubcap.task.model.BaseModel;
+import com.hubcap.task.model.ScavengerModel.ScavengerModelResult;
 import com.hubcap.task.state.TaskMode;
 
 /*
@@ -45,9 +42,7 @@ public class TaskModel extends BaseModel {
 
     private CommandLine cli = null;
 
-    private String userName = null;
-
-    private String userPassOrToken = null;
+    private List<ScavengerModel> scavengerModels = Collections.synchronizedList(new ArrayList<ScavengerModel>());
 
     /**
      * CTOR
@@ -55,18 +50,8 @@ public class TaskModel extends BaseModel {
      * @param username
      * @param passwordOrToken
      */
-    public TaskModel(String username, String passwordOrToken) {
+    public TaskModel() {
         super();
-        this.userPassOrToken = passwordOrToken;
-        this.userName = username;
-    }
-
-    public String getUserName() {
-        return this.userName;
-    }
-
-    public String getPasswordOrToken() {
-        return this.userPassOrToken;
     }
 
     public void setTaskMode(TaskMode mode) {
@@ -83,5 +68,41 @@ public class TaskModel extends BaseModel {
 
     public CommandLine getCommandLine() {
         return this.cli;
+    }
+
+    /**
+     * Add a new scavenger model to the aggregate list
+     * 
+     * @param model
+     */
+    public void addScavengerModel(ScavengerModel model) {
+        if (!scavengerModels.contains(model)) {
+            scavengerModels.add(model);
+        }
+    }
+
+    @Override
+    public Object calculate() {
+        TaskModelResult results = new TaskModelResult();
+        results.results = new ScavengerModelResult[scavengerModels.size()];
+
+        Iterator<ScavengerModel> it = scavengerModels.iterator();
+
+        int i = 0;
+        while (it.hasNext()) {
+            ScavengerModel curr = it.next();
+            results.results[i++] = (ScavengerModelResult) curr.calculate();
+        }
+
+        return results;
+    }
+
+    public TaskModelResult[] generate() {
+        return null;
+    }
+
+    public class TaskModelResult {
+
+        public ScavengerModelResult[] results;
     }
 }

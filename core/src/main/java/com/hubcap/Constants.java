@@ -36,25 +36,35 @@ package com.hubcap;
  */
 public class Constants {
 
+    public static final String JAVA_D = "D";
+
     // =============================================================================
     // HubCap Configuration Constants, Limits, Measures, and Values.
+
+    /**
+     * Maximum number of HTTP Requests that should be assigned to any thread
+     * this will avoid long thread hang times and allow more threads to cycle
+     * and be free
+     */
+    public static final int MAX_HTTP_REQUESTS_PER_THREAD = 4;
+
     /**
      * The Maximum number of concurrent HubCap Tasks that can be running while
      * this tool is open. Changing this to a larger number will likely affect
      * performance when running multiple Scavenge mode jos.
      */
-    public static final int MAX_TASK_RUNNER_THREADS = 32;
+    public static final int MAX_TASK_RUNNER_THREADS = 20;
 
     /**
      * The maximum number of concurrent helper threads that can run within a
      * single task runner.
      */
-    public static final int MAX_HELPER_THREADS = 12;
+    public static final int MAX_HELPER_THREADS = 500;
 
     /**
      * Aggregating is a funny business. give it some room
      */
-    public static final int MAX_AGGREGATOR_THREADS = 256;
+    public static final int MAX_AGGREGATOR_THREADS = 500;
 
     /**
      * The number of milliseconds that a task runner can run without producing
@@ -63,7 +73,7 @@ public class Constants {
      */
     public static final int CMD_TIMEOUT_MS = 5000;
 
-    public static final int TASK_RUN_STOP_WAIT_TIME_MS = 500;
+    public static final int TASK_RUN_STOP_WAIT_TIME_MS = 1000;
 
     /**
      * The number of milliseconds that HubCap will sleep if there are no free
@@ -117,7 +127,11 @@ public class Constants {
 
     public static final String CMD_BYE = "bye";
 
+    // authorization
     public static final String CMD_AUTH = "auth";
+
+    // GitHub
+    public static final String GITHUB_API_URL = "https://api.github.com";
 
     // =====================================================
     // Testing Constants

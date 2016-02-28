@@ -1,7 +1,5 @@
 package com.hubcap.lowlevel;
 
-import java.io.EOFException;
-
 /*
  * #%L
  * HubCap-Core
@@ -29,20 +27,28 @@ import java.io.EOFException;
  */
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.security.GeneralSecurityException;
 import java.util.Map;
 
 import com.google.api.client.http.GenericUrl;
+import com.google.api.client.http.HttpHeaders;
 import com.google.api.client.http.HttpRequest;
 import com.google.api.client.http.HttpResponse;
 import com.google.api.client.http.HttpTransport;
-import com.google.api.client.util.Base64;
+import com.hubcap.process.ProcessModel;
 import com.hubcap.utils.ErrorUtils;
 
 public class HttpClient {
 
     private HttpTransport transport;
+
+    private boolean autoAuth = false;
+
+    private String un = null;
+
+    private String pwd = null;
+
+    public boolean verbose = false;
 
     /**
      * CTOR attempts to instantiate a new Google Transport, and throws any
@@ -55,24 +61,105 @@ public class HttpClient {
         transport = new HttpTransport();
     }
 
-    public boolean verbose = false;
+    public void setIsAuthorizedClient(boolean enable, String... credentials) {
+        if (verbose) {
+            System.out.println("setIsAuthorizedClient(" + enable + ")");
+        }
+        if (enable) {
 
+            autoAuth = true;
+            if (credentials.length > 1) {
+                un = credentials[0];
+                pwd = credentials[1];
+
+                if (verbose) {
+                    System.out.println("user: " + un + " was authorized!");
+                }
+            }
+        } else {
+            autoAuth = false;
+            un = null;
+            pwd = null;
+        }
+    }
+
+    public void copyAuth(HttpClient client) {
+        if (un != null && pwd != null) {
+            client.setIsAuthorizedClient(true, un, pwd);
+        }
+    }
+
+    /**
+     * Copy User Input headers to our HttpRequest object.
+     * 
+     * @param headers
+     * @param request
+     */
+    private void copyHeaders(Map<String, String> headers, HttpRequest request) {
+
+        if (headers != null && request != null) {
+            if (ProcessModel.instance().getVerbose()) {
+                System.out.println("HttpClient::copyHeaders()" + (headers == null ? "" : "- adding: " + headers.size() + " new headers"));
+            }
+
+            for (String key : headers.keySet()) {
+                request.headers.set(key, headers.get(key));
+            }
+        }
+    }
+
+    private void setAuth(HttpHeaders headers, String userName, String pass) {
+        if (headers.authorization == null) {
+            headers.setBasicAuthentication(userName, pass);
+        } else {
+            if (verbose) {
+                System.out.println("Already authorized header!");
+            }
+        }
+    }
+
+    /**
+     * Read a ParsedHttpResponse response back from a HttpResponse
+     * 
+     * @param response
+     *            HttpResponse from one of the request types.
+     * @return ParsedHttpResponse.
+     * @throws IOException
+     */
     private ParsedHttpResponse readResponse(HttpResponse response) throws IOException {
-
         ParsedHttpResponse parsedResponse = new ParsedHttpResponse(response);
         return parsedResponse;
     }
 
-    public ParsedHttpResponse headAuthorizedRequest(String reqUrl, String un, String pwd, Map<String, String> headers) throws IOException {
+    /**
+     * Returns a ParsedHttpResponse for a headRequest (much like doing 'curl
+     * -I') This is used when all we care about is the header. I.e. we want to
+     * know the page we start and end on for paginated data and thats returned
+     * in the header. This call will allow a quick setup for that value.
+     * 
+     * @param reqUrl
+     *            The request url for which we want to download the headers.
+     * @param headers
+     * @return
+     * @throws IOException
+     */
+    public ParsedHttpResponse headRequest(String reqUrl, Map<String, String> headers) throws IOException {
         GenericUrl url = new GenericUrl(reqUrl);
         HttpRequest request = transport.buildHeadRequest();
         request.url = url;
 
-        request.headers.setBasicAuthentication(un, pwd);
+        if (autoAuth) {
+            setAuth(request.headers, un, pwd);
+        }
 
-        if (headers != null) {
-            for (String key : headers.keySet()) {
-                request.headers.set(key, headers.get(key));
+        copyHeaders(headers, request);
+
+        // if auto auth is set for HttpClient,
+        // the user can just call 'getRequest' without having to pass new
+        // parameters in each time.
+        if (autoAuth) {
+            if (request.headers.authorization == null) {
+                request.headers.setBasicAuthentication(un, pwd);
             }
         }
 
@@ -81,6 +168,67 @@ public class HttpClient {
         return r;
     }
 
+    /**
+     * Wrapper for head request that catches the exception and returns NULL on
+     * failure. Prints stack trace if verbose mode enabled.
+     * 
+     * @param headUrl
+     * @param headers
+     * @return
+     */
+    public ParsedHttpResponse safeHeadRequest(String headUrl, Map<String, String> headers) {
+        try {
+            return headRequest(headUrl, headers);
+        } catch (IOException e) {
+            if (verbose) {
+                ErrorUtils.printStackTrace(e);
+            }
+        } catch (Exception e) {
+            if (verbose) {
+                ErrorUtils.printStackTrace(e);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Performs an Authorized Head Request using the specified credentials.
+     * 
+     * @param reqUrl
+     *            Request Url
+     * @param un
+     *            Authentication User Name
+     * @param pwd
+     *            Authenticated Password
+     * @param headers
+     *            Any additional headers which you plan to send
+     * @return a ParsedHttpResponse.
+     * @throws IOException
+     */
+    public ParsedHttpResponse headAuthorizedRequest(String reqUrl, String un, String pwd, Map<String, String> headers) throws IOException {
+        GenericUrl url = new GenericUrl(reqUrl);
+        HttpRequest request = transport.buildHeadRequest();
+        request.url = url;
+
+        request.headers.setBasicAuthentication(un, pwd);
+        copyHeaders(headers, request);
+
+        HttpResponse response = request.execute();
+        ParsedHttpResponse r = readResponse(response);
+        return r;
+    }
+
+    /**
+     * Performs a 'safe' authorized head request. If an error is thrown, it is
+     * trapped here and null is returned. The stack is printed if verbose mode
+     * enabled.
+     * 
+     * @param headUrl
+     * @param un
+     * @param pwd
+     * @param headers
+     * @return
+     */
     public ParsedHttpResponse safeHeadAuthorizedRequest(String headUrl, String un, String pwd, Map<String, String> headers) {
         try {
             return headAuthorizedRequest(headUrl, un, pwd, headers);
@@ -88,8 +236,28 @@ public class HttpClient {
             if (verbose) {
                 ErrorUtils.printStackTrace(e);
             }
-            return null;
         } catch (Exception e) {
+            if (verbose) {
+                ErrorUtils.printStackTrace(e);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Peforms a safe get request.
+     * 
+     * @param reqUrl
+     * @param un
+     * @param pwd
+     * @param headers
+     * @return
+     */
+    public ParsedHttpResponse safeGetRequest(String reqUrl, Map<String, String> headers) {
+        try {
+            return getRequest(reqUrl, headers);
+        } catch (IOException e) {
+
             if (verbose) {
                 ErrorUtils.printStackTrace(e);
             }
@@ -97,7 +265,16 @@ public class HttpClient {
         }
     }
 
-    public ParsedHttpResponse safeAuthorizedRequest(String reqUrl, String un, String pwd, Map<String, String> headers) {
+    /**
+     * Peforms a safe 'authorized' get request.
+     * 
+     * @param reqUrl
+     * @param un
+     * @param pwd
+     * @param headers
+     * @return
+     */
+    public ParsedHttpResponse safeGetAuthorizedRequest(String reqUrl, String un, String pwd, Map<String, String> headers) {
         try {
             return getAuthorizedRequest(reqUrl, un, pwd, headers);
         } catch (IOException e) {
@@ -120,12 +297,7 @@ public class HttpClient {
         request.url = url;
 
         request.headers.setBasicAuthentication(un, pwd);
-
-        if (headers != null) {
-            for (String key : headers.keySet()) {
-                request.headers.set(key, headers.get(key));
-            }
-        }
+        copyHeaders(headers, request);
 
         HttpResponse response = request.execute();
         ParsedHttpResponse r = readResponse(response);
@@ -148,6 +320,15 @@ public class HttpClient {
         HttpRequest request = transport.buildGetRequest();
         request.url = url;
 
+        copyHeaders(headers, request);
+
+        // if auto auth is set for HttpClient,
+        // the user can just call 'getRequest' without having to pass new
+        // parameters in each time.
+        if (autoAuth) {
+            setAuth(request.headers, un, pwd);
+        }
+
         HttpResponse response = request.execute();
         ParsedHttpResponse r = readResponse(response);
         return r;
@@ -158,6 +339,9 @@ public class HttpClient {
         HttpRequest request = transport.buildPostRequest();
         request.url = url;
         request.headers.setBasicAuthentication(un, pwd);
+
+        copyHeaders(headers, request);
+
         HttpResponse response = request.execute();
         ParsedHttpResponse r = readResponse(response);
         return r;
@@ -167,6 +351,15 @@ public class HttpClient {
         GenericUrl url = new GenericUrl(reqUrl);
         HttpRequest request = transport.buildPostRequest();
         request.url = url;
+
+        copyHeaders(headers, request);
+
+        // if auto auth is set for HttpClient,
+        // the user can just call 'getRequest' without having to pass new
+        // parameters in each time.
+        if (autoAuth) {
+            setAuth(request.headers, un, pwd);
+        }
 
         HttpResponse response = request.execute();
         ParsedHttpResponse r = readResponse(response);

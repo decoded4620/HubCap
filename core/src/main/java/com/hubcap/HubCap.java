@@ -1,16 +1,19 @@
 package com.hubcap;
 
-import java.util.ArrayList;
-import java.util.Collections;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Date;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-import com.hubcap.lowlevel.StringUtils;
+import com.google.gson.Gson;
 import com.hubcap.process.ProcessModel;
 import com.hubcap.process.ProcessState;
+import com.hubcap.task.REPL;
 import com.hubcap.task.TaskRunner;
 import com.hubcap.task.TaskRunnerListener;
+import com.hubcap.task.model.ResultsModel;
+import com.hubcap.task.model.ResultsModel.ProcessResults;
 import com.hubcap.task.state.TaskRunnerState;
 import com.hubcap.utils.ErrorUtils;
 import com.hubcap.utils.ThreadUtils;
@@ -83,19 +86,37 @@ public class HubCap {
     // The REPL
     private REPL repl = null;
 
+    // tracks the number of jobs that were 'requested' i.e. the number
+    // of times 'processArgs' was called.
     private AtomicLong jobsRequested = new AtomicLong();
 
+    // tracks the number of onTaskStart events recorded by
+    // all tasks
     private AtomicLong jobsStarted = new AtomicLong();
+
+    // tracks the number of job state change events
+    // that occur throughout the lifecycle of HubCap.
 
     private AtomicLong jobStateChanges = new AtomicLong();
 
+    // tracks the Data update calls
     private AtomicLong jobDataUpdates = new AtomicLong();
 
+    // tracks the number of errored tasks
     private AtomicLong jobsErrored = new AtomicLong();
 
+    // tracks the number of task that errored, and couldn't recover
+    // for whatever reason
     private AtomicLong jobsCantRecover = new AtomicLong();
 
+    // tracks the number of jobs completed.
     private AtomicLong jobsCompleted = new AtomicLong();
+
+    // a Mutex for synchronized code
+    private Object mutex = new Object();
+
+    // the shutdown thread
+    private Thread shutdownThread;
 
     /**
      * private CTOR, use HubCap.instance()
@@ -114,16 +135,14 @@ public class HubCap {
         if (this.state == ProcessState.DORMANT) {
             this.setState(ProcessState.STARTUP);
 
+            // synchronized shared resource for TaskRunners to aggregate to
+            TaskRunner.sharedResource_resultModel = new ResultsModel();
             // start the task runner which
             // will queue up all of our task runner threads and wait for the
             // next job.
             TaskRunner.startThreadPool();
         }
     }
-
-    private Object mutex = new Object();
-
-    private Thread shutdownThread;
 
     /**
      * Shutdown the current TaskSystem, regardless if tasks are running. This
@@ -227,11 +246,6 @@ public class HubCap {
         // Arguments with length > 0 are pushed to a TaskRunner
         else {
 
-            // shutdown the REPLThread while the tasks are running
-            if (isREPL()) {
-                shutdownREPL();
-            }
-
             jobsRequested.incrementAndGet();
 
             // find a free task
@@ -258,11 +272,9 @@ public class HubCap {
                     @Override
                     public void onTaskError(TaskRunner runner, Exception e, boolean canRecoverFromError) {
                         jobsErrored.incrementAndGet();
-
                         if (!canRecoverFromError) {
                             jobsCantRecover.incrementAndGet();
                         }
-
                     }
 
                     @Override
@@ -274,16 +286,26 @@ public class HubCap {
                     public void onTaskComplete(TaskRunner runner) {
 
                         jobsCompleted.incrementAndGet();
+                        if (TaskRunner.waitingTaskCount() == 1) {
 
-                        if (ProcessModel.instance().getREPLFallback()) {
-                            // once this task completes
-                            // check the process model for REPL Fallback
-                            // if we're the final task
-                            if (TaskRunner.waitingTaskCount() == 1) {
-                                startREPL();
+                            try {
+                                ProcessResults results = (ProcessResults) TaskRunner.sharedResource_resultModel.calculate();
+                                Gson gson = new Gson();
+                                String json = gson.toJson(results);
+
+                                try {
+                                    int len = json.getBytes().length;
+
+                                    Files.write(Paths.get("./results.json"), json.getBytes());
+                                    System.out.println("Wrote: " + len + " bytes");
+                                } catch (IOException e) {
+                                    ErrorUtils.printStackTrace(e);
+                                    System.out.println("ERROR WRITING FILE, But Final Results are: \n-------- START -------\n" + json + "\n------ END ------\n");
+                                }
+                            } catch (ClassCastException e) {
+                                ErrorUtils.printStackTrace(e);
                             }
-                        } else {
-                            if (TaskRunner.waitingTaskCount() == 1) {
+                            if (!ProcessModel.instance().getREPLFallback()) {
                                 shutdown();
                             }
                         }

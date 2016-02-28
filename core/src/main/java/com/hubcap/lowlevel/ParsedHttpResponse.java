@@ -45,8 +45,6 @@ public class ParsedHttpResponse {
 
     private String contentEncoding;
 
-    private HttpResponse responseObject;
-
     private boolean isSuccessStatusCode;
 
     public ParsedHttpResponse(HttpResponse response) throws IOException {

@@ -1,4 +1,4 @@
-package com.hubcap;
+package com.hubcap.task;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -33,6 +33,8 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.concurrent.Callable;
 
+import com.hubcap.Constants;
+import com.hubcap.HubCap;
 import com.hubcap.process.ProcessModel;
 import com.hubcap.utils.ThreadUtils;
 
@@ -77,7 +79,6 @@ public class REPL implements Runnable {
         // insure no leading / trailing spaces.
         input = input.trim();
         int charIdx = 0;
-        String currArg = null;
         StringBuilder currArgBuilder = null;
 
         // null chars to start
