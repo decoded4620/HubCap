@@ -730,12 +730,12 @@ public class TaskRunner implements Runnable {
         // the scheme of things.
         taskId += Math.abs(r.nextLong());
     }
-    
-    public void freeSelf(){
-    	if(this.taskState == TaskRunnerState.PRIMED){
-    		this.taskState = TaskRunnerState.DORMANT;
-    		TaskRunner.freeTask(this);
-    	}
+
+    public void freeSelf() {
+        if (this.taskState == TaskRunnerState.PRIMED) {
+            this.taskState = TaskRunnerState.DORMANT;
+            TaskRunner.freeTask(this);
+        }
     }
 
     public Thread getTaskThread() {
@@ -900,11 +900,12 @@ public class TaskRunner implements Runnable {
                 helper.setListener(listener);
                 return helper;
             } catch (RejectedExecutionException ex) {
+                System.err.println("Failed to execute thread at: " + this.helpers.size());
                 ErrorUtils.printStackTrace(ex);
             }
-            
+
             helper.die();
-            
+
         } catch (IllegalAccessException ex) {
             ErrorUtils.printStackTrace(ex);
         } catch (InstantiationException ex) {
@@ -912,8 +913,6 @@ public class TaskRunner implements Runnable {
         } catch (InvocationTargetException ex) {
             ErrorUtils.printStackTrace(ex);
         }
-        
-        
 
         return null;
     }

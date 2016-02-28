@@ -3,3 +3,4 @@
 *.exec
 core/target
 target
+resources/results_*.json

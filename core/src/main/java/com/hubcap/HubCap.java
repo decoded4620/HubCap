@@ -299,7 +299,7 @@ public class HubCap {
                                     Files.write(Paths.get("./resources/results_" + (new Date().getTime()) + ".json"), json.getBytes());
                                     System.out.println("Wrote: " + len + " bytes");
                                 } catch (IOException e) {
-                                	
+
                                     ErrorUtils.printStackTrace(e);
                                     System.out.println("ERROR WRITING FILE, But Final Results are: \n-------- START -------\n" + json + "\n------ END ------\n");
                                 }

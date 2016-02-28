@@ -82,9 +82,9 @@ public class TaskRunnerHelper implements Runnable {
     public void die() {
         System.out.println("die()");
         this.listener = null;
-        
-        if(this.owner.getTaskState() == TaskRunnerState.PRIMED){
-        	this.owner.freeSelf();
+
+        if (this.owner.getTaskState() == TaskRunnerState.PRIMED) {
+            this.owner.freeSelf();
         }
         this.owner = null;
         this.taskModel = null;

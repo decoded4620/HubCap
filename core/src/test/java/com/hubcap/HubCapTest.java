@@ -57,7 +57,8 @@ public class HubCapTest {
 
         // create HubCap
         HubCap.instance();
-        HubCap.instance().processArgs(REPL.processREPLInput("auth decoded4620 129bf1a604dd4c46ce235b8d9d6e1ac261e50c1e"));
+        // HubCap.instance().processArgs(REPL.processREPLInput("auth decoded4620 129bf1a604dd4c46ce235b8d9d6e1ac261e50c1e"));
+        HubCap.instance().processArgs(REPL.processREPLInput("auth theWither2468 364Apples"));
     }
 
     @Test
@@ -161,8 +162,7 @@ public class HubCapTest {
 
             TestListener testListener = new TestListener();
 
-            hub.processArgs(REPL.processREPLInput("edgecase 4"), testListener);
-            hub.processArgs(REPL.processREPLInput("railslove 4"), testListener);
+            hub.processArgs(REPL.processREPLInput("edgecase 4 railslove 4"), testListener);
             // wait indefinitely until active task count is 0
             ThreadUtils.napUntil(new ExpressionEval() {
 
@@ -206,14 +206,7 @@ public class HubCapTest {
             DebugSearchHelper.debug_errorChance = 0.025;
 
             // run several one offs
-            hub.processArgs(REPL.processREPLInput("errfree 10"));
-            hub.processArgs(REPL.processREPLInput("engineyard 10"));
-            hub.processArgs(REPL.processREPLInput("ministrycentered 10"));
-            hub.processArgs(REPL.processREPLInput("jquery 10"));
-            hub.processArgs(REPL.processREPLInput("angular 10"));
-            hub.processArgs(REPL.processREPLInput("sevenwire 10 wrenchlabs 10 railslove 10"));
-            hub.processArgs(REPL.processREPLInput("netguru 10 NanoHttpd 10 trabian 10 UntoThisLast 10"));
-            hub.processArgs(REPL.processREPLInput("orgsync 10 wesabe 10 standout 10 galaxycats 10 edgecase 10 notch8 10 lincolnloop 10"));
+            hub.processArgs(REPL.processREPLInput("angular 10 jquery 10 sevenwire 10 wrenchlabs 10 railslove 10 netguru 10 NanoHttpd 10 trabian 10 UntoThisLast 10"));
 
             // wait for at most X milliseconds for active task count to be more
             // than 0
