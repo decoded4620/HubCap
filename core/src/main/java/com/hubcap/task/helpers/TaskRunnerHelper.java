@@ -5,6 +5,7 @@ import java.util.Properties;
 import com.hubcap.Constants;
 import com.hubcap.task.TaskRunner;
 import com.hubcap.task.model.TaskModel;
+import com.hubcap.task.state.TaskRunnerState;
 
 /*
  * #%L
@@ -81,6 +82,10 @@ public class TaskRunnerHelper implements Runnable {
     public void die() {
         System.out.println("die()");
         this.listener = null;
+        
+        if(this.owner.getTaskState() == TaskRunnerState.PRIMED){
+        	this.owner.freeSelf();
+        }
         this.owner = null;
         this.taskModel = null;
 
