@@ -2,5 +2,7 @@
 /target/
 *.exec
 core/target
+core/build
+.gradle
 target
 resources/results_*.json

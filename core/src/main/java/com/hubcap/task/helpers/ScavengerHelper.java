@@ -1,5 +1,7 @@
 package com.hubcap.task.helpers;
 
+import com.hubcap.lowlevel.SewingMachine;
+
 /*
  * #%L
  * HubCap-Core
@@ -30,8 +32,8 @@ import com.hubcap.task.TaskRunner;
 
 public class ScavengerHelper extends DefaultSearchHelper {
 
-    public ScavengerHelper(TaskRunner owner) {
-        super(owner);
+    public ScavengerHelper(SewingMachine sewingMachine, TaskRunner owner) {
+        super(sewingMachine, owner);
     }
 
 }

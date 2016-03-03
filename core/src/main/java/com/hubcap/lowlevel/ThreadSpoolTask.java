@@ -1,4 +1,4 @@
-package com.hubcap.task.helpers.drones;
+package com.hubcap.lowlevel;
 
 /*
  * #%L
@@ -26,10 +26,7 @@ package com.hubcap.task.helpers.drones;
  * #L%
  */
 
-public class PullDrone {
+public interface ThreadSpoolTask {
 
-    public PullDrone() {
-        // TODO Auto-generated constructor stub
-    }
-
+    public void perform();
 }

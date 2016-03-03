@@ -206,7 +206,6 @@ public class ThreadUtils {
             return true;
         } catch (InterruptedException ex) {
             if (verbose) {
-                System.err.println("SAFE SLEEP!");
                 ErrorUtils.printStackTrace(ex);
             }
             return false;

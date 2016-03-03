@@ -41,7 +41,10 @@ import org.apache.commons.cli.ParseException;
 
 import com.hubcap.Constants;
 import com.hubcap.HubCap;
+import com.hubcap.lowlevel.HttpClient;
 import com.hubcap.lowlevel.HubCapOptionsParser;
+import com.hubcap.lowlevel.SewingMachine;
+import com.hubcap.lowlevel.ThreadSpool;
 import com.hubcap.process.ProcessModel;
 import com.hubcap.task.model.TaskModel;
 import com.hubcap.task.state.TaskMode;
@@ -82,16 +85,22 @@ public class CLIOptionBuilder {
 
         availableOptions.addOption("h", "help", false, helpContent);
         availableOptions.addOption("v", "verbose", false, "Be verbose");
-
+        availableOptions.addOption("q", "quiet", false, "Be quiet (cancels verbose)");
         availableOptions.addOption("r", "no-repl", false, "DONT fallback to repl mode");
-        availableOptions.addOption("s", "shutdown-after", false, "Shutdown after results are complete");
+        availableOptions.addOption("f", "file", true, "Write results to this file (instead of the default)");
         availableOptions.addOption("m", "mode", true, "Set the task mode, valid settings are 'search', 'deepsearch', 'watch', 'debug', default is 'search'");
-        availableOptions.addOption("q", "quiet", true, "Be quiet (cancels verbose)");
 
         Option property = Option.builder("D").hasArgs().valueSeparator('=').build();
         availableOptions.addOption(property);
     }
 
+    /**
+     * Given the inputs, builds the process and task model
+     * 
+     * @param args
+     * @return
+     * @throws ParseException
+     */
     public static TaskModel buildInputOptionsModel(String[] args) throws ParseException {
 
         synchronized (parser) {
@@ -107,7 +116,6 @@ public class CLIOptionBuilder {
                 formatter.printHelp("How to use", availableOptions);
                 throw ex;
             }
-
             // check for some default globals to be available within the
             // provided
             // options and setup the ProcessModel prior to running the task.
@@ -133,7 +141,15 @@ public class CLIOptionBuilder {
             // options and setup the ProcessModel prior to running the task.
             if (cmd.hasOption("v")) {
                 ProcessModel.instance().setVerbose(true);
+
             }
+
+            // check for quiet
+            if (cmd.hasOption("q")) {
+                ProcessModel.instance().setVerbose(false);
+            }
+
+            SewingMachine.verbose = ThreadSpool.verbose = HttpClient.verbose = SewingMachine.verbose = ProcessModel.instance().getVerbose();
 
             String[] argv = cmd.getArgs();
 
@@ -148,7 +164,7 @@ public class CLIOptionBuilder {
                 if (arg.equals(Constants.CMD_AUTH)) {
 
                     if (argv.length > i + 2) {
-                        System.out.println("Authorizing User for this session: ");
+                        System.out.println("Authorizing User " + argv[i + 1] + " for this session");
                         ProcessModel.instance().auth(argv[i + 1], argv[i + 2]);
                     } else {
                         System.out.println("Cannot authorize, args are malformed, expected username and password");
@@ -175,7 +191,6 @@ public class CLIOptionBuilder {
                     case "deepsearch":
                         model.setTaskMode(TaskMode.DEEP_SEARCH);
                         break;
-
                     case "watch":
                         model.setTaskMode(TaskMode.SCAVENGER);
                         break;
@@ -184,5 +199,4 @@ public class CLIOptionBuilder {
             return model;
         }
     }
-
 }

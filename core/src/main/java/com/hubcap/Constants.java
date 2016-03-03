@@ -46,25 +46,25 @@ public class Constants {
      * this will avoid long thread hang times and allow more threads to cycle
      * and be free
      */
-    public static final int MAX_HTTP_REQUESTS_PER_THREAD = 4;
+    public static final int MAX_HTTP_REQUESTS_PER_THREAD = 6;
 
     /**
      * The Maximum number of concurrent HubCap Tasks that can be running while
      * this tool is open. Changing this to a larger number will likely affect
-     * performance when running multiple Scavenge mode jos.
+     * performance when running multiple mode jobs.
      */
-    public static final int MAX_TASK_RUNNER_THREADS = 20;
+    public static final int MAX_TASK_RUNNER_THREADS = 10;
 
     /**
      * The maximum number of concurrent helper threads that can run within a
      * single task runner.
      */
-    public static final int MAX_HELPER_THREADS = 500;
+    public static final int MAX_HELPER_THREADS = 256;
 
     /**
      * Aggregating is a funny business. give it some room
      */
-    public static final int MAX_AGGREGATOR_THREADS = 500;
+    public static final int MAX_AGGREGATOR_THREADS = 256;
 
     /**
      * The number of milliseconds that a task runner can run without producing
@@ -81,7 +81,7 @@ public class Constants {
      */
     public static final int FREE_TASK_RUNNER_WAIT_TIME = 64;
 
-    public static final int NEW_THREAD_SPAWN_BREATHING_TIME = 100;
+    public static final int NEW_THREAD_SPAWN_BREATHING_TIME = 250;
 
     /**
      * Number milliseconds between 'tick' calls. (17 ms = 60 frames)
@@ -91,7 +91,7 @@ public class Constants {
     /**
      * Amount of time to wait between checks for a shutdown status.
      */
-    public static final int POOL_SHUTDOWN_CHECK_INTERVAL = 400;
+    public static final int POOL_SHUTDOWN_CHECK_INTERVAL = 500;
 
     public static final int POOL_TERM_CHECK_INTERVAL = 128;
 

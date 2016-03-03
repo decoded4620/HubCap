@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.cli.CommandLine;
 
 import com.hubcap.Constants;
+import com.hubcap.lowlevel.SewingMachine;
 import com.hubcap.process.ProcessModel;
 import com.hubcap.task.TaskRunner;
 import com.hubcap.task.helpers.drones.GitHubOrgScavengerDrone;
@@ -52,15 +53,17 @@ public class DefaultSearchHelper extends TaskRunnerHelper {
 
     private List<Thread> droneThreads = Collections.synchronizedList(new ArrayList<Thread>());
 
+    private SewingMachine sewingMachine;
+
     /**
      * CTOR
      * 
      * @param owner
      */
-    public DefaultSearchHelper(TaskRunner owner) {
+    public DefaultSearchHelper(SewingMachine sewingMachine, TaskRunner owner) {
 
         super(owner);
-
+        this.sewingMachine = sewingMachine;
     }
 
     @Override
@@ -120,9 +123,9 @@ public class DefaultSearchHelper extends TaskRunnerHelper {
 
                     try {
                         synchronized (droneThreads) {
-                            Thread t = new Thread(new GitHubOrgScavengerDrone(this.taskModel, orgName, count));
-                            droneThreads.add(t);
 
+                            Thread t = new Thread(new GitHubOrgScavengerDrone(sewingMachine, this.taskModel, orgName, count));
+                            droneThreads.add(t);
                             t.setName("drone" + String.valueOf(owner.getTaskId()) + "-" + String.valueOf(new Date().getTime()));
                             t.setDaemon(false);
                             t.start();
@@ -136,24 +139,37 @@ public class DefaultSearchHelper extends TaskRunnerHelper {
                     System.err.println("Your rate limit is exhausted, try again later!");
                 }
             }
+        }
 
-            while (droneThreads.size() > 0) {
-                Iterator<Thread> it = droneThreads.iterator();
-                while (it.hasNext()) {
-                    Thread currDroneThread = it.next();
+        if (ProcessModel.instance().getVerbose()) {
+            System.out.println("Waiting for Drone Threads: " + droneThreads.size());
+        }
 
-                    if (currDroneThread.getState() == State.TERMINATED) {
-                        it.remove();
+        // wait for all threads to complete
+        while (droneThreads.size() > 0) {
+            Iterator<Thread> it = droneThreads.iterator();
+            while (it.hasNext()) {
+                Thread currDroneThread = it.next();
+
+                if (currDroneThread.getState() == State.TERMINATED) {
+
+                    if (ProcessModel.instance().getVerbose()) {
+                        System.err.println("Removing Drone Thread: " + currDroneThread.getName());
                     }
-                }
 
-                // sleep and do it again
-                if (!ThreadUtils.safeSleep(Constants.IDLE_TIME, false)) {
-                    break;
+                    it.remove();
                 }
+            }
+
+            // sleep and do it again
+            if (!ThreadUtils.safeSleep(Constants.NEW_THREAD_SPAWN_BREATHING_TIME + Constants.NEW_THREAD_SPAWN_BREATHING_TIME * 1 / SewingMachine.MAX_THREADS_PER_MACHINE,
+                    ProcessModel.instance().getVerbose())) {
+                System.err.println("INTERRUPTED WAIT FOR DRONE THREADS!");
+                break;
             }
         }
 
+        System.out.println("No More Drones!");
         // wait a tad
 
         synchronized (taskModel) {

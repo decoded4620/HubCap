@@ -1,0 +1,4 @@
+rootProject.name = 'hubcap-project'
+include ':hubcap'
+
+project(':hubcap').projectDir = "$rootDir/core" as File

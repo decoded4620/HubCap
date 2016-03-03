@@ -51,6 +51,7 @@ import com.hubcap.Constants;
 import com.hubcap.HubCap;
 import com.hubcap.inputs.CLIOptionBuilder;
 import com.hubcap.lowlevel.ExpressionEval;
+import com.hubcap.lowlevel.SewingMachine;
 import com.hubcap.process.ProcessModel;
 import com.hubcap.process.ProcessState;
 import com.hubcap.task.helpers.DebugSearchHelper;
@@ -154,6 +155,8 @@ public class TaskRunner implements Runnable {
 
     // muches the busyArgumentQueue
     private static Thread busyMuncherThread;
+
+    public static SewingMachine sewingMachine;
 
     // static initializer flag.
     private static boolean isTaskSystemReady = false;
@@ -892,7 +895,7 @@ public class TaskRunner implements Runnable {
         try {
 
             Constructor<?> c = clazz.getConstructors()[0];
-            TaskRunnerHelper helper = (TaskRunnerHelper) c.newInstance(this);
+            TaskRunnerHelper helper = (TaskRunnerHelper) c.newInstance(sewingMachine, this);
             try {
 
                 helperPool.execute(helper);

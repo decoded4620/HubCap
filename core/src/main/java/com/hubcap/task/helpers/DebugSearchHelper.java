@@ -29,6 +29,7 @@ package com.hubcap.task.helpers;
 import java.util.Date;
 
 import com.hubcap.Constants;
+import com.hubcap.lowlevel.SewingMachine;
 import com.hubcap.task.TaskRunner;
 
 public class DebugSearchHelper extends DefaultSearchHelper {
@@ -37,8 +38,8 @@ public class DebugSearchHelper extends DefaultSearchHelper {
 
     public static double debug_errorChance = 0.0D;
 
-    public DebugSearchHelper(TaskRunner owner) {
-        super(owner);
+    public DebugSearchHelper(SewingMachine sewingMachine, TaskRunner owner) {
+        super(sewingMachine, owner);
     }
 
     @Override

@@ -100,6 +100,8 @@ public class ScavengerModel extends BaseModel {
             }
         });
 
+        topNReposByStars.clear();
+
         // get the top N stars
         for (int i = 0; i < size; ++i) {
             topNReposByStars.add(reposForOrg.get(i));
@@ -122,6 +124,8 @@ public class ScavengerModel extends BaseModel {
                 return 1;
             }
         });
+
+        topNReposByForks.clear();
         // get the top N forks
         // get the top N stars
         for (int i = 0; i < size; ++i) {
@@ -157,7 +161,7 @@ public class ScavengerModel extends BaseModel {
                 return 1;
             }
         });
-
+        topNReposByPR.clear();
         // get the top N forks
         for (int i = 0; i < size; ++i) {
             topNReposByPR.add(reposForOrg.get(i));
@@ -192,6 +196,7 @@ public class ScavengerModel extends BaseModel {
             }
         });
 
+        topNReposByContrib.clear();
         // get the top N forks
         for (int i = 0; i < size; ++i) {
             topNReposByContrib.add(reposForOrg.get(i));

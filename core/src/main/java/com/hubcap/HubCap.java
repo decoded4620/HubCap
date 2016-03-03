@@ -7,6 +7,7 @@ import java.util.Date;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.gson.Gson;
+import com.hubcap.lowlevel.SewingMachine;
 import com.hubcap.process.ProcessModel;
 import com.hubcap.process.ProcessState;
 import com.hubcap.task.REPL;
@@ -118,6 +119,8 @@ public class HubCap {
     // the shutdown thread
     private Thread shutdownThread;
 
+    private SewingMachine sewingMachine;
+
     /**
      * private CTOR, use HubCap.instance()
      */
@@ -135,6 +138,12 @@ public class HubCap {
         if (this.state == ProcessState.DORMANT) {
             this.setState(ProcessState.STARTUP);
 
+            try {
+                sewingMachine = SewingMachine.spawn(SewingMachine.MAX_THREADS_PER_MACHINE, "GitHubOrgScavengerDrone::PullDataCrawlerTask");
+                TaskRunner.sewingMachine = sewingMachine;
+            } catch (Exception e) {
+
+            }
             // synchronized shared resource for TaskRunners to aggregate to
             TaskRunner.sharedResource_resultModel = new ResultsModel();
             // start the task runner which
@@ -165,6 +174,8 @@ public class HubCap {
                                 HubCap.instance().report();
 
                                 shutdownREPL();
+
+                                sewingMachine.gracefulShutdown();
 
                                 System.out.println("Shutdown threadpool");
                                 TaskRunner.stopThreadPool();
@@ -286,28 +297,40 @@ public class HubCap {
                     public void onTaskComplete(TaskRunner runner) {
 
                         jobsCompleted.incrementAndGet();
-                        if (TaskRunner.waitingTaskCount() == 1) {
 
-                            try {
-                                ProcessResults results = (ProcessResults) TaskRunner.sharedResource_resultModel.calculate();
-                                Gson gson = new Gson();
-                                String json = gson.toJson(results);
+                        System.out.println("onTaskComplete:" + TaskRunner.waitingTaskCount() + " remain");
+                        if (TaskRunner.waitingTaskCount() <= 1) {
 
-                                try {
-                                    int len = json.getBytes().length;
-
-                                    Files.write(Paths.get("./resources/results_" + (new Date().getTime()) + ".json"), json.getBytes());
-                                    System.out.println("Wrote: " + len + " bytes");
-                                } catch (IOException e) {
-
-                                    ErrorUtils.printStackTrace(e);
-                                    System.out.println("ERROR WRITING FILE, But Final Results are: \n-------- START -------\n" + json + "\n------ END ------\n");
-                                }
-                            } catch (ClassCastException e) {
-                                ErrorUtils.printStackTrace(e);
+                            // block and wait
+                            while (sewingMachine.taskCount() > 0 && TaskRunner.waitingTaskCount() <= 1) {
+                                ThreadUtils.safeSleep(Constants.IDLE_TIME, ProcessModel.instance().getVerbose());
                             }
-                            if (!ProcessModel.instance().getREPLFallback()) {
-                                shutdown();
+                            // sleep a second
+                            synchronized (sewingMachine) {
+                                if (sewingMachine.taskCount() <= 1 && sewingMachine.runningSpools() <= 1) {
+
+                                    try {
+                                        ProcessResults results = (ProcessResults) TaskRunner.sharedResource_resultModel.calculate();
+                                        Gson gson = new Gson();
+                                        String json = gson.toJson(results);
+
+                                        try {
+                                            int len = json.getBytes().length;
+
+                                            Files.write(Paths.get("./resources/results_" + (new Date().getTime()) + ".json"), json.getBytes());
+                                            System.out.println("Wrote: " + len + " bytes");
+                                        } catch (IOException e) {
+
+                                            ErrorUtils.printStackTrace(e);
+                                            System.out.println("ERROR WRITING FILE, But Final Results are: \n-------- START -------\n" + json + "\n------ END ------\n");
+                                        }
+                                    } catch (ClassCastException e) {
+                                        ErrorUtils.printStackTrace(e);
+                                    }
+                                    if (!ProcessModel.instance().getREPLFallback()) {
+                                        shutdown();
+                                    }
+                                }
                             }
                         }
                     }

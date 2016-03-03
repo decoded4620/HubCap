@@ -32,7 +32,13 @@ import java.util.Iterator;
 import java.util.List;
 
 import com.hubcap.task.model.TaskModel.TaskModelResult;
+import com.hubcap.utils.ErrorUtils;
 
+/**
+ * The Top level Results Model. Aggregated for each new Command
+ * 
+ * @author Decoded4620 2016
+ */
 public class ResultsModel extends BaseModel {
 
     private List<TaskModel> taskModels = null;
@@ -56,8 +62,10 @@ public class ResultsModel extends BaseModel {
 
     @Override
     public Object calculate() {
+
         ProcessResults r = new ProcessResults();
         synchronized (taskModels) {
+            ErrorUtils.printStackTrace(new Exception("ResultsModel::calculate()"));
             r.results = new TaskModelResult[taskModels.size()];
 
             Iterator<TaskModel> it = taskModels.iterator();
@@ -65,7 +73,9 @@ public class ResultsModel extends BaseModel {
             int i = 0;
             while (it.hasNext()) {
                 TaskModel t = it.next();
-                r.results[i++] = (TaskModelResult) t.calculate();
+                if (r.results != null && t != null) {
+                    r.results[i++] = (TaskModelResult) t.calculate();
+                }
             }
         }
 
@@ -76,5 +86,4 @@ public class ResultsModel extends BaseModel {
 
         public TaskModelResult[] results;
     }
-
 }

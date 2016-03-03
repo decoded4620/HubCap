@@ -48,7 +48,7 @@ public class HttpClient {
 
     private String pwd = null;
 
-    public boolean verbose = false;
+    public static boolean verbose = false;
 
     /**
      * CTOR attempts to instantiate a new Google Transport, and throws any
@@ -62,19 +62,12 @@ public class HttpClient {
     }
 
     public void setIsAuthorizedClient(boolean enable, String... credentials) {
-        if (verbose) {
-            System.out.println("setIsAuthorizedClient(" + enable + ")");
-        }
         if (enable) {
 
             autoAuth = true;
             if (credentials.length > 1) {
                 un = credentials[0];
                 pwd = credentials[1];
-
-                if (verbose) {
-                    System.out.println("user: " + un + " was authorized!");
-                }
             }
         } else {
             autoAuth = false;
@@ -313,9 +306,9 @@ public class HttpClient {
      */
     public ParsedHttpResponse getRequest(String reqUrl, Map<String, String> headers) throws IOException {
 
-        if (verbose) {
-            System.out.println("getRequest(" + reqUrl + ")");
-        }
+        // if (verbose) {
+        // System.out.println("getRequest(" + reqUrl + ")");
+        // }
         GenericUrl url = new GenericUrl(reqUrl);
         HttpRequest request = transport.buildGetRequest();
         request.url = url;
@@ -330,7 +323,11 @@ public class HttpClient {
         }
 
         HttpResponse response = request.execute();
+
         ParsedHttpResponse r = readResponse(response);
+        // if (verbose) {
+        // System.out.println("getRequest(" + reqUrl + ") -- response" + r);
+        // }
         return r;
     }
 
